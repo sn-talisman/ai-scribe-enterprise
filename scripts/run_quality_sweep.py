@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+Run quality evaluation sweep across all pipeline output samples.
+
+For each sample that has a generated note + gold standard:
+  1. Score with LLM-as-judge (6 dimensions)
+  2. Extract and compare facts (medications, diagnoses, findings, plan)
+  3. Write quality_report_v{N}.md to output/<mode>/<sample_id>/
+  4. Write aggregate quality_report_v{N}.md to output/
+
+Usage:
+    python scripts/run_quality_sweep.py --version v2
+    python scripts/run_quality_sweep.py --version v1 --no-fact-check   # faster
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+_OUTPUT_DIR = Path("output")
+_DATA_MODES = [("dictation", "soap_final.md"), ("conversations", "soap_initial.md")]
+
+
+def _collect_samples(version: str) -> list[tuple[str, str, Path, Path]]:
+    """Return (mode, sample_id, generated_note_path, gold_path) for evaluatable samples."""
+    samples = []
+    for mode, gold_name in _DATA_MODES:
+        data_dir = Path("data") / mode
+        out_dir = _OUTPUT_DIR / mode
+        if not out_dir.exists():
+            continue
+        for sample_dir in sorted(out_dir.iterdir()):
+            if not sample_dir.is_dir():
+                continue
+            sample_id = sample_dir.name
+            note_path = sample_dir / f"generated_note_{version}.md"
+            gold_path = Path("data") / mode / sample_id / gold_name
+            if note_path.exists() and gold_path.exists():
+                samples.append((mode, sample_id, note_path, gold_path))
+    return samples
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--version", default="v2", help="Pipeline version to evaluate")
+    parser.add_argument("--no-fact-check", action="store_true", help="Skip fact extraction (faster)")
+    parser.add_argument("--output-dir", default="output")
+    args = parser.parse_args()
+
+    samples = _collect_samples(args.version)
+    if not samples:
+        print(f"No samples found for version {args.version}. Run batch_eval.py first.")
+        sys.exit(1)
+
+    print(f"Evaluating {len(samples)} samples (version={args.version})")
+
+    import httpx
+    try:
+        resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
+        models = resp.json().get("models", [])
+        model = models[0]["name"] if models else "qwen2.5:32b"
+    except Exception:
+        model = "qwen2.5:32b"
+
+    from mcp_servers.llm.ollama_server import OllamaServer
+    engine = OllamaServer(model_overrides={"command_parse": model, "note_generation": model})
+    print(f"Judge model    : {model}")
+    print()
+
+    from quality.evaluator import QualityEvaluator
+    from quality.report import write_quality_report, write_aggregate_report
+
+    evaluator = QualityEvaluator(engine, run_fact_check=not args.no_fact_check)
+    results = []
+    out_dir = Path(args.output_dir)
+
+    for i, (mode, sample_id, note_path, gold_path) in enumerate(samples, 1):
+        print(f"[{i}/{len(samples)}] {sample_id} ({mode}) ... ", end="", flush=True)
+        generated = note_path.read_text()
+        gold = gold_path.read_text()
+
+        # Read transcript if available (from comparison file)
+        transcript = ""
+        comparison_path = note_path.parent / f"comparison_{args.version}.md"
+        if comparison_path.exists():
+            comp_text = comparison_path.read_text()
+            # Extract transcript from collapsed section
+            if "<summary>Transcript" in comp_text:
+                parts = comp_text.split("</summary>")
+                if len(parts) > 1:
+                    transcript = parts[1].split("</details>")[0].strip()
+
+        try:
+            result = evaluator.evaluate(
+                sample_id=sample_id,
+                generated_note=generated,
+                gold_note=gold,
+                transcript=transcript,
+                version=args.version,
+            )
+            results.append(result)
+
+            # Per-sample quality reports are written to the aggregate output dir only.
+            # (output/<mode>/<sample_id>/ contains only generated_note and comparison)
+
+            fc_str = ""
+            if result.fact_check:
+                fc = result.fact_check
+                fc_str = f" | dx={fc.diagnoses[0]}/{fc.diagnoses[1]} meds={fc.medications[0]}/{fc.medications[1]}"
+            print(
+                f"{result.elapsed_s:.1f}s | "
+                f"score={result.overall_score:.2f} "
+                f"overlap={result.keyword_overlap:.0%}"
+                f"{fc_str}"
+            )
+        except Exception as exc:
+            import traceback
+            print(f"FAILED: {exc}")
+            traceback.print_exc()
+
+    if results:
+        scored = [r for r in results if r.has_gold]
+        avg = sum(r.overall_score for r in scored) / len(scored) if scored else 0
+        avg_overlap = sum(r.keyword_overlap for r in scored) / len(scored) if scored else 0
+        print(f"\n{'─'*60}")
+        print(f"Average score   : {avg:.2f} / 5.0")
+        print(f"Average overlap : {avg_overlap:.0%}")
+        print(f"{'─'*60}")
+
+        agg_path = out_dir / f"quality_report_{args.version}.md"
+        write_aggregate_report(results, args.version, agg_path)
+
+    print(f"\nPer-sample files: output/{{dictation,conversations}}/<sample_id>/generated_note_{args.version}.md + comparison_{args.version}.md")
+
+
+if __name__ == "__main__":
+    main()

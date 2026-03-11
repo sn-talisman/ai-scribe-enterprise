@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(tee /tmp/batch_v2c.log)",
+      "Bash(tee /tmp/batch_v2_final.log)",
+      "Bash(python3 -c \":*)",
+      "Bash(PYTHONPATH=. python3 -c \":*)",
+      "Bash(python -m pytest tests/quality/test_regression.py -v)",
+      "Bash(ls output/*.md)"
+    ],
+    "additionalDirectories": [
+      "/home/sanket/.claude/projects/-home-sanket-code-ai-scribe-enterprise"
+    ]
+  }
+}

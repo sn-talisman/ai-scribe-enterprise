@@ -1,0 +1,78 @@
+# PHI / Test Data — NEVER COMMIT
+data/dictation/
+data/conversation/
+data/conversations/
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude local settings
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+.next/
+out/
+
+# Models (large files)
+*.bin
+*.pt
+*.pth
+*.onnx
+*.gguf
+models/
+
+# Docker
+.docker/
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# Generated outputs (contain PHI from test data)
+output/dictation/
+output/conversations/
+
+# Temp / scratch
+tmp/
+memory/
+
+# Pytest
+.pytest_cache/
+
+# Quality experiments log (may contain PHI references)
+quality/experiments.jsonl
