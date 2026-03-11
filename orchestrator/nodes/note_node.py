@@ -219,6 +219,37 @@ def _assemble_context_block(state: EncounterState) -> str:
     return (template.format(context_text="\n".join(parts)) + "\n") if template else ""
 
 
+def _assemble_vocab_block(state: EncounterState) -> str:
+    """Build specialty vocabulary block for LLM prompt injection."""
+    from mcp_servers.data.medical_dict_server import get_dict_server
+    from config.loader import load_prompt
+
+    specialty = state.provider_profile.specialty or "general"
+    if specialty == "general":
+        return ""
+
+    dict_server = get_dict_server()
+
+    # Get specialty hotwords (up to 60 terms), then append provider custom vocab
+    hotwords = dict_server.get_hotwords(specialty, max_terms=60)
+    custom = [w for w in state.provider_profile.custom_vocabulary if w not in hotwords]
+    all_terms = hotwords + custom[:20]   # cap total at ~80 terms
+
+    if not all_terms:
+        return ""
+
+    tpl = load_prompt("note_generation").get("vocab_block_template", "")
+    if not tpl:
+        return ""
+    return (
+        tpl.format(
+            specialty_label=specialty.title(),
+            vocab_terms=", ".join(all_terms[:80]),
+        )
+        + "\n"
+    )
+
+
 def _assemble_style_block(state: EncounterState) -> str:
     directives = state.provider_profile.style_directives
     if not directives:
@@ -230,19 +261,36 @@ def _assemble_style_block(state: EncounterState) -> str:
 
 
 def _load_template(state: EncounterState) -> NoteTemplate:
-    """Load the best-matching template for this encounter's provider profile."""
-    specialty = state.provider_profile.specialty or "general"
-    template_id = state.provider_profile.template_id or "soap_default"
-    server = get_template_server()
+    """
+    Load the best-matching template for this encounter.
 
-    # First: try direct filename match (template_id == source file without .yaml)
+    Resolution order:
+    1. Provider manager: route by (provider_id, visit_type from context_packet)
+    2. Provider profile template_id (explicit override)
+    3. Specialty + visit_type fallback via template server
+    """
+    from config.provider_manager import get_provider_manager
+
+    specialty = state.provider_profile.specialty or "general"
+    server = get_template_server()
+    manager = get_provider_manager()
+
+    # Derive visit_type from context_packet if available
+    visit_type: str | None = None
+    if state.context_packet and state.context_packet.encounter:
+        visit_type = state.context_packet.encounter.visit_type
+
+    # Resolve template_id via provider manager routing table
+    template_id = manager.resolve_template(state.provider_profile.id, visit_type)
+
+    # First: try direct filename match
     for tpl in server.list_templates():
         if tpl.source_file == f"{template_id}.yaml":
             return tpl
 
     # Fallback: specialty + derived visit_type
-    visit_type = template_id.replace("soap_default", "default").replace("_", " ")
-    return server.get_template(specialty, visit_type)
+    vt = (visit_type or "").replace("_", " ") or "default"
+    return server.get_template(specialty, vt)
 
 
 def _assemble_template_block(template: NoteTemplate) -> str:
@@ -353,6 +401,7 @@ def assemble_prompt(state: EncounterState) -> tuple[str, str, NoteTemplate]:
     user_message: str = block["user_template"].format(
         context_block=_assemble_context_block(state),
         template_block=_assemble_template_block(template),
+        vocab_block=_assemble_vocab_block(state),
         transcript=transcript_text,
         style_block=_assemble_style_block(state),
     ).strip()

@@ -94,8 +94,8 @@ def _collect_samples(data_dirs: list[str]) -> list[tuple[Path, str, Path | None]
 def run_sample(audio_path: Path, mode: str, gold_path: Path | None, graph, version: str, out_dir: Path) -> dict:
     from orchestrator.graph import run_encounter
     from orchestrator.state import (
-        DeliveryMethod, EncounterState, NoteType,
-        ProviderProfile, RecordingMode,
+        DeliveryMethod, EncounterState,
+        RecordingMode,
     )
     from output.markdown_writer import write_clinical_note
     from output.comparison_writer import write_comparison
@@ -110,17 +110,15 @@ def run_sample(audio_path: Path, mode: str, gold_path: Path | None, graph, versi
     sample_out_dir = out_dir / subfolder / sample_id
     sample_out_dir.mkdir(parents=True, exist_ok=True)
 
+    from config.provider_manager import get_provider_manager
+    mgr = get_provider_manager()
+    # Load real provider profile; fall back to orthopedic default if not found
+    provider_profile = mgr.load_or_default("dr_faraz_rahman")
+
     state = EncounterState(
-        provider_id="eval-provider",
+        provider_id=provider_profile.id,
         patient_id=f"patient-{sample_id}",
-        provider_profile=ProviderProfile(
-            id="eval-provider",
-            name="Eval Provider",
-            specialty="orthopedic",
-            note_format=NoteType.SOAP,
-            # dictation samples are follow-up visits (short); conversations are longer encounters
-            template_id="ortho_follow_up" if mode == "dictation" else "ortho_initial_eval",
-        ),
+        provider_profile=provider_profile,
         recording_mode=recording_mode,
         delivery_method=DeliveryMethod.CLIPBOARD,
         audio_file_path=str(audio_path),

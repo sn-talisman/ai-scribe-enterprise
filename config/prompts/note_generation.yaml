@@ -22,7 +22,7 @@ soap:
     - Output ONLY the labeled sections specified in NOTE FORMAT — no preamble, no commentary.
 
   user_template: |
-    {context_block}{template_block}TRANSCRIPT:
+    {context_block}{template_block}{vocab_block}TRANSCRIPT:
     {transcript}
 
     {style_block}Generate the clinical note now.
@@ -44,7 +44,7 @@ hp:
     - Output ONLY the labeled sections specified in NOTE FORMAT — no preamble, no commentary.
 
   user_template: |
-    {context_block}{template_block}TRANSCRIPT:
+    {context_block}{template_block}{vocab_block}TRANSCRIPT:
     {transcript}
 
     {style_block}Generate the H&P note now.
@@ -65,7 +65,7 @@ progress:
     - Output ONLY the labeled sections specified in NOTE FORMAT — no preamble, no commentary.
 
   user_template: |
-    {context_block}{template_block}TRANSCRIPT:
+    {context_block}{template_block}{vocab_block}TRANSCRIPT:
     {transcript}
 
     {style_block}Generate the progress note now.
@@ -84,6 +84,15 @@ template_block_template: |
 context_block_template: |
   PATIENT CONTEXT (from EHR — do not repeat verbatim, use only to inform clinical accuracy):
   {context_text}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Specialty vocabulary block (inserted when specialty dictionary is loaded)
+# {specialty_label} e.g. "Orthopedic"
+# {vocab_terms} comma-separated hotwords
+# ─────────────────────────────────────────────────────────────────────────────
+vocab_block_template: |
+  SPECIALTY VOCABULARY ({specialty_label}) — recognise and use these terms correctly:
+  {vocab_terms}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Style directive block (inserted when provider has style directives)

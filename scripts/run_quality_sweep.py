@@ -135,6 +135,28 @@ def main() -> None:
         agg_path = out_dir / f"quality_report_{args.version}.md"
         write_aggregate_report(results, args.version, agg_path)
 
+        # ── Per-provider quality tracking ────────────────────────────────
+        from config.provider_manager import get_provider_manager
+        mgr = get_provider_manager()
+        for provider_id in mgr.list_providers():
+            dim_keys = ["medical_accuracy", "completeness", "no_hallucination",
+                        "structure_compliance", "clinical_language", "readability"]
+            dim_totals: dict[str, list[float]] = {k: [] for k in dim_keys}
+            for r in scored:
+                for k in dim_keys:
+                    v = getattr(r, k, None)
+                    if v is not None:
+                        dim_totals[k].append(v)
+            dim_avgs = {k: round(sum(v) / len(v), 3) for k, v in dim_totals.items() if v}
+            mgr.update_quality_score(
+                provider_id=provider_id,
+                version=args.version,
+                score=avg,
+                sample_count=len(scored),
+                dimension_scores=dim_avgs or None,
+            )
+            print(f"Quality scores updated for provider: {provider_id}")
+
     print(f"\nPer-sample files: output/{{dictation,conversations}}/<sample_id>/generated_note_{args.version}.md + comparison_{args.version}.md")
 
 

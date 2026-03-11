@@ -65,6 +65,7 @@ class ProviderProfile(BaseModel):
     id: str
     name: str
     specialty: str
+    credentials: Optional[str] = None   # "MD", "DO", "NP", "PA", etc.
     npi: Optional[str] = None
     practice_id: Optional[str] = None
 
