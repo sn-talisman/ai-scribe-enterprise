@@ -54,11 +54,8 @@ def set_llm_engine_factory(factory: Callable[[], LLMEngine]) -> None:
 
 
 def _default_engine_factory() -> LLMEngine:
-    from config.loader import get_llm_config
-    from mcp_servers.llm.ollama_server import OllamaServer
-
-    cfg = get_llm_config()
-    return OllamaServer.from_config(cfg)
+    from mcp_servers.registry import get_registry
+    return get_registry().get_llm()
 
 
 def _get_llm_engine() -> LLMEngine:

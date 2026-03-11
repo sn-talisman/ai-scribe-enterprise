@@ -43,7 +43,7 @@ def set_asr_engine_factory(factory: Optional[Callable[[], ASREngine]]) -> None:
     """
     Override the ASR engine factory used by transcribe_node.
 
-    Pass None to restore the default (WhisperXServer from engines.yaml).
+    Pass None to restore the default (registry lookup from engines.yaml).
 
     Example:
         set_asr_engine_factory(lambda: MockASREngine())
@@ -53,11 +53,8 @@ def set_asr_engine_factory(factory: Optional[Callable[[], ASREngine]]) -> None:
 
 
 def _default_engine_factory() -> ASREngine:
-    from config.loader import get_asr_config
-    from mcp_servers.asr.whisperx_server import WhisperXServer
-
-    cfg = get_asr_config()
-    return WhisperXServer.from_config(cfg)
+    from mcp_servers.registry import get_registry
+    return get_registry().get_asr()
 
 
 def _get_asr_engine() -> ASREngine:
