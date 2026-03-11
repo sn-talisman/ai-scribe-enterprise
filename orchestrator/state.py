@@ -93,9 +93,30 @@ class ProviderProfile(BaseModel):
 class PatientDemographics(BaseModel):
     id: str
     name: Optional[str] = None     # Redacted in transit
-    dob: Optional[str] = None
+    dob: Optional[str] = None      # ISO 8601 date
     sex: Optional[str] = None
     mrn: Optional[str] = None
+
+
+class EncounterContext(BaseModel):
+    """Encounter-level context extracted from EHR or gold notes."""
+    date_of_service: Optional[str] = None
+    visit_type: Optional[str] = None     # initial_evaluation, follow_up, etc.
+    date_of_injury: Optional[str] = None
+    case_number: Optional[str] = None
+
+
+class ProviderContext(BaseModel):
+    """Provider info from EHR or gold notes (separate from ProviderProfile)."""
+    name: Optional[str] = None
+    credentials: Optional[str] = None
+    specialty: Optional[str] = None
+
+
+class FacilityContext(BaseModel):
+    """Facility info from EHR or gold notes."""
+    name: Optional[str] = None
+    location: Optional[str] = None
 
 
 class Problem(BaseModel):
@@ -127,13 +148,16 @@ class LabResult(BaseModel):
 
 class ContextPacket(BaseModel):
     patient: Optional[PatientDemographics] = None
+    encounter: Optional[EncounterContext] = None
+    provider_context: Optional[ProviderContext] = None
+    facility: Optional[FacilityContext] = None
     problem_list: list[Problem] = Field(default_factory=list)
     medications: list[Medication] = Field(default_factory=list)
     allergies: list[Allergy] = Field(default_factory=list)
     recent_labs: list[LabResult] = Field(default_factory=list)
     last_visit_note_summary: Optional[str] = None
     loaded_at: Optional[datetime] = None
-    source: str = "manual"   # manual | fhir | extension
+    source: str = "manual"   # manual | fhir | extension | stub
 
 
 # ---------------------------------------------------------------------------

@@ -71,12 +71,64 @@ def write_clinical_note(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     provider = state.provider_profile
 
+    # Build demographic header from context packet if available
+    ctx = state.context_packet
+    header_parts: list[str] = []
+    if ctx and ctx.patient and ctx.patient.name:
+        p = ctx.patient
+        line1_parts = []
+        if p.name:
+            line1_parts.append(f"**Patient:** {p.name}")
+        if p.dob:
+            line1_parts.append(f"**DOB:** {p.dob}")
+        if p.sex:
+            line1_parts.append(f"**Sex:** {p.sex}")
+        if p.mrn:
+            line1_parts.append(f"**MRN:** {p.mrn}")
+        header_parts.append(" | ".join(line1_parts))
+
+    if ctx and ctx.encounter:
+        e = ctx.encounter
+        line2_parts = []
+        if e.date_of_service:
+            line2_parts.append(f"**Date of Service:** {e.date_of_service}")
+        if e.visit_type:
+            line2_parts.append(f"**Visit Type:** {e.visit_type.replace('_', ' ').title()}")
+        if e.date_of_injury:
+            line2_parts.append(f"**Date of Injury:** {e.date_of_injury}")
+        if e.case_number:
+            line2_parts.append(f"**Case:** {e.case_number}")
+        if line2_parts:
+            header_parts.append(" | ".join(line2_parts))
+
+    if ctx and ctx.provider_context and ctx.provider_context.name:
+        prov = ctx.provider_context
+        prov_str = f"**Provider:** {prov.name}"
+        if prov.credentials:
+            prov_str += f", {prov.credentials}"
+        if prov.specialty:
+            prov_str += f" | **Specialty:** {prov.specialty}"
+        header_parts.append(prov_str)
+    else:
+        header_parts.append(
+            f"**Provider:** {provider.name} | **Specialty:** {provider.specialty.title()}"
+        )
+
+    if ctx and ctx.facility and (ctx.facility.name or ctx.facility.location):
+        fac = ctx.facility
+        fac_parts = []
+        if fac.name:
+            fac_parts.append(fac.name)
+        if fac.location:
+            fac_parts.append(fac.location)
+        header_parts.append(f"**Facility:** {', '.join(fac_parts)}")
+
     lines: list[str] = [
         f"# Clinical Note — {sample_id or state.patient_id}",
         "",
-        f"**Date:** {now} | "
-        f"**Provider:** {provider.name} | "
-        f"**Specialty:** {provider.specialty.title()}",
+    ]
+    lines.extend(header_parts)
+    lines += [
         f"**Pipeline Version:** {version} | "
         f"**ASR:** {state.asr_engine_used or '—'} | "
         f"**LLM:** {state.llm_engine_used or '—'}",

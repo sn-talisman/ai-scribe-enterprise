@@ -144,6 +144,62 @@ def _assemble_context_block(state: EncounterState) -> str:
     if not ctx:
         return ""
     parts: list[str] = []
+
+    # Patient demographics
+    if ctx.patient:
+        p = ctx.patient
+        demo_parts = []
+        if p.name:
+            demo_parts.append(f"Name: {p.name}")
+        if p.dob:
+            demo_parts.append(f"DOB: {p.dob}")
+        if p.sex:
+            demo_parts.append(f"Sex: {p.sex}")
+        if p.mrn:
+            demo_parts.append(f"MRN: {p.mrn}")
+        if demo_parts:
+            parts.append("Patient: " + " | ".join(demo_parts))
+
+    # Encounter info
+    if ctx.encounter:
+        e = ctx.encounter
+        enc_parts = []
+        if e.date_of_service:
+            enc_parts.append(f"Date of Service: {e.date_of_service}")
+        if e.visit_type:
+            enc_parts.append(f"Visit Type: {e.visit_type.replace('_', ' ').title()}")
+        if e.date_of_injury:
+            enc_parts.append(f"Date of Injury: {e.date_of_injury}")
+        if e.case_number:
+            enc_parts.append(f"Case: {e.case_number}")
+        if enc_parts:
+            parts.append("Encounter: " + " | ".join(enc_parts))
+
+    # Provider info
+    if ctx.provider_context:
+        prov = ctx.provider_context
+        prov_parts = []
+        if prov.name:
+            prov_parts.append(prov.name)
+        if prov.credentials:
+            prov_parts.append(prov.credentials)
+        if prov.specialty:
+            prov_parts.append(prov.specialty)
+        if prov_parts:
+            parts.append("Provider: " + ", ".join(prov_parts))
+
+    # Facility info
+    if ctx.facility:
+        fac = ctx.facility
+        fac_parts = []
+        if fac.name:
+            fac_parts.append(fac.name)
+        if fac.location:
+            fac_parts.append(fac.location)
+        if fac_parts:
+            parts.append("Facility: " + ", ".join(fac_parts))
+
+    # Clinical context (problems, meds, allergies)
     if ctx.problem_list:
         probs = "; ".join(f"{p.description} ({p.code})" for p in ctx.problem_list[:10])
         parts.append(f"Problems: {probs}")
@@ -155,6 +211,7 @@ def _assemble_context_block(state: EncounterState) -> str:
         parts.append(f"Allergies: {allgs}")
     if ctx.last_visit_note_summary:
         parts.append(f"Last visit: {ctx.last_visit_note_summary[:300]}")
+
     if not parts:
         return ""
     from config.loader import load_prompt

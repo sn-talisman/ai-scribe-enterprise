@@ -1,37 +1,135 @@
 """
 CONTEXT NODE — Pre-encounter context assembly.
 
-Real implementation (Session 7):
-  PRE:  validate_patient_id → check_ehr_connectivity → load_provider_profile → dedup_session
-  CORE: fetch_ehr_data (via MCP EHR tool server)
-  POST: check_completeness → optimize_context_size → minimize_phi → snapshot_context
+Loads patient demographics, encounter info, and clinical context
+via the EHR adapter from the engine registry.
 
-Session 1: Stub — marks status and records node completion.
+For stubbed mode (Session 7): reads from patient_context.yaml files
+via StubEHRServer.
+
+For production: will read from FHIR, HL7v2, or browser extension adapters.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
-from orchestrator.state import ContextPacket, EncounterState, EncounterStatus
+from orchestrator.state import (
+    ContextPacket,
+    EncounterContext,
+    EncounterState,
+    EncounterStatus,
+    FacilityContext,
+    PatientDemographics,
+    ProviderContext,
+)
 
 logger = logging.getLogger(__name__)
 
 
+def _find_context_yaml(state: EncounterState) -> Optional[Path]:
+    """Locate patient_context.yaml near the audio file."""
+    if state.audio_file_path:
+        audio_dir = Path(state.audio_file_path).parent
+        ctx_path = audio_dir / "patient_context.yaml"
+        if ctx_path.exists():
+            return ctx_path
+    return None
+
+
 def context_node(state: EncounterState) -> dict:
-    """Load pre-encounter patient context (stub)."""
+    """Load pre-encounter patient context from EHR adapter."""
     logger.info("context_node: start", extra={"encounter_id": state.encounter_id})
     t0 = time.monotonic_ns()
 
-    # --- stub: create an empty context packet ---------------------------
-    context_packet = ContextPacket(
-        source="manual",
-        # Real node fetches from EHR via MCP EHR server
-    )
+    context_packet = ContextPacket(source="manual")
+
+    try:
+        ctx_path = _find_context_yaml(state)
+        if ctx_path:
+            from mcp_servers.registry import get_registry
+            ehr = get_registry().get_ehr()
+
+            # Set the context file path for StubEHRServer
+            if hasattr(ehr, "set_context_path"):
+                ehr.set_context_path(ctx_path)
+
+            # Load patient demographics (sync wrapper for async)
+            import asyncio
+            from mcp_servers.ehr.base import PatientIdentifier
+            patient_ehr = asyncio.get_event_loop().run_until_complete(
+                ehr.get_patient(PatientIdentifier(mrn=state.patient_id))
+            )
+            patient = PatientDemographics(
+                id=patient_ehr.id,
+                name=f"{patient_ehr.given_name or ''} {patient_ehr.family_name or ''}".strip() or None,
+                dob=patient_ehr.dob,
+                sex=patient_ehr.sex,
+                mrn=patient_ehr.mrn,
+            )
+
+            # Load encounter context (stub-specific accessors)
+            encounter_data = {}
+            provider_data = {}
+            facility_data = {}
+            if hasattr(ehr, "get_encounter_context"):
+                encounter_data = ehr.get_encounter_context()
+            if hasattr(ehr, "get_provider_context"):
+                provider_data = ehr.get_provider_context()
+            if hasattr(ehr, "get_facility_context"):
+                facility_data = ehr.get_facility_context()
+
+            encounter_ctx = EncounterContext(
+                date_of_service=encounter_data.get("date_of_service"),
+                visit_type=encounter_data.get("visit_type"),
+                date_of_injury=encounter_data.get("date_of_injury"),
+                case_number=encounter_data.get("case_number"),
+            ) if encounter_data else None
+
+            provider_ctx = ProviderContext(
+                name=provider_data.get("name"),
+                credentials=provider_data.get("credentials"),
+                specialty=provider_data.get("specialty"),
+            ) if provider_data else None
+
+            facility_ctx = FacilityContext(
+                name=facility_data.get("name"),
+                location=facility_data.get("location"),
+            ) if facility_data else None
+
+            context_packet = ContextPacket(
+                patient=patient,
+                encounter=encounter_ctx,
+                provider_context=provider_ctx,
+                facility=facility_ctx,
+                loaded_at=datetime.now(timezone.utc),
+                source="stub",
+            )
+            logger.info(
+                "context_node: loaded patient context",
+                extra={
+                    "encounter_id": state.encounter_id,
+                    "patient_name": patient.name,
+                    "source": str(ctx_path),
+                },
+            )
+        else:
+            logger.info(
+                "context_node: no patient_context.yaml found, using empty context",
+                extra={"encounter_id": state.encounter_id},
+            )
+
+    except Exception as exc:
+        logger.warning(
+            "context_node: failed to load context, continuing with empty",
+            extra={"encounter_id": state.encounter_id, "error": str(exc)},
+        )
 
     elapsed_ms = (time.monotonic_ns() - t0) // 1_000_000
-
     logger.info("context_node: done", extra={"encounter_id": state.encounter_id, "elapsed_ms": elapsed_ms})
 
     return {
