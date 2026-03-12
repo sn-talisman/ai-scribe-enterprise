@@ -182,12 +182,19 @@ class WhisperXServer(ASREngine):
         transcribe_kwargs: dict[str, Any] = {
             "batch_size": self.batch_size,
             "language": config.language or self.language,
+            "beam_size": config.beam_size,
+            "condition_on_previous_text": config.condition_on_previous_text,
+            "compression_ratio_threshold": config.compression_ratio_threshold,
+            "no_speech_threshold": config.no_speech_threshold,
         }
         if config.initial_prompt:
             transcribe_kwargs["initial_prompt"] = config.initial_prompt
             logger.info(
                 "whisperx: initial_prompt set (%d chars)", len(config.initial_prompt)
             )
+        if config.hotwords:
+            transcribe_kwargs["hotwords"] = ", ".join(config.hotwords)
+            logger.info("whisperx: hotwords set (%d terms)", len(config.hotwords))
         raw_result = self._model.transcribe(audio, **transcribe_kwargs)
 
         # ── Step 2: Align timestamps ──────────────────────────────────────

@@ -239,12 +239,26 @@ def transcribe_node(state: EncounterState) -> dict:
     except Exception:
         pass  # non-critical; proceed without prompt
 
+    # hotwords: specialty terms for direct logit boost (more targeted than initial_prompt)
+    hotwords: list[str] = []
+    try:
+        custom = getattr(state.provider_profile, "custom_vocabulary", None) or []
+        hotwords = list(custom[:100])  # cap to avoid token budget overflow
+    except Exception:
+        pass
+
+    # condition_on_previous_text: True for dictation (context flows across 30s chunks),
+    # False for ambient (patient speech must not condition physician chunk decoding).
+    condition_on_previous = (mode == RecordingMode.DICTATION)
+
     asr_cfg = ASRConfig(
         language="en",
         diarize=diarize,
         max_speakers=5 if diarize else 1,
-        custom_vocabulary=state.provider_profile.custom_vocabulary,
+        custom_vocabulary=getattr(state.provider_profile, "custom_vocabulary", []) or [],
+        hotwords=hotwords,
         initial_prompt=initial_prompt,
+        condition_on_previous_text=condition_on_previous,
     )
 
     # ── Transcribe ────────────────────────────────────────────────────────

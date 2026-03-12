@@ -28,12 +28,27 @@ class ASRConfig:
     max_speakers: Optional[int] = None
     # Vocabulary boosting
     custom_vocabulary: list[str] = field(default_factory=list)
+    # hotwords: direct logit boost for specific tokens during beam search.
+    # More targeted than initial_prompt (which is a decoder prefix hint).
+    # Use for rare specialty terms, drug names, provider-specific phrases.
     hotwords: list[str] = field(default_factory=list)
-    # Quality
-    beam_size: int = 5
-    vad_filter: bool = True
     # Vocabulary priming — passed as initial_prompt to faster-whisper decoder
     initial_prompt: Optional[str] = None
+    # Decoding quality
+    beam_size: int = 5
+    vad_filter: bool = True
+    # condition_on_previous_text: carry context across 30-second chunks.
+    # True  → dictation (physician dictates a coherent document; prior chunk
+    #          text primes the next chunk's decoder)
+    # False → ambient (patient speech must NOT condition physician chunks;
+    #          prevents cross-speaker hallucination)
+    condition_on_previous_text: bool = True
+    # compression_ratio_threshold: raise (e.g. 2.8) for physicians who use
+    # repetitive clinical phrasing to avoid triggering temperature fallback.
+    compression_ratio_threshold: float = 2.4
+    # no_speech_threshold: lower (e.g. 0.4) for physicians with frequent
+    # pauses mid-dictation to prevent segments being dropped as silence.
+    no_speech_threshold: float = 0.6
 
 
 @dataclass
