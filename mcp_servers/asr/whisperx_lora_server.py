@@ -34,13 +34,25 @@ from mcp_servers.asr.whisperx_server import WhisperXServer
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).parent.parent.parent
-MODELS_DIR = ROOT / "models" / "whisper_lora"
+MODELS_DIR     = ROOT / "models" / "whisper_lora"
+CT2_MODELS_DIR = ROOT / "models" / "whisper_ct2"
 
 
 def adapter_exists(provider_id: str) -> bool:
     """Return True if a trained LoRA adapter exists for this provider."""
     adapter_path = MODELS_DIR / provider_id / "adapter_model.safetensors"
     return adapter_path.exists()
+
+
+def ct2_export_exists(provider_id: str) -> bool:
+    """Return True if a CTranslate2 export of the merged model exists.
+
+    Prefer this over the HF PEFT path — it uses the full faster-whisper
+    pipeline (beam search, temperature fallback, VAD, proper punctuation).
+    Export via: python scripts/export_lora_ct2.py --provider {provider_id}
+    """
+    ct2_path = CT2_MODELS_DIR / provider_id / "model.bin"
+    return ct2_path.exists()
 
 
 class WhisperXLoRAServer(WhisperXServer):
@@ -96,20 +108,32 @@ class WhisperXLoRAServer(WhisperXServer):
 
     def _load_model(self) -> None:
         """
-        Override: load base WhisperX model, then overlay the LoRA adapter.
+        Override: load LoRA-enhanced model, preferring CTranslate2 export.
 
-        Uses HuggingFace PEFT to merge the adapter with the faster-whisper
-        compatible model.  Note: faster-whisper (CTranslate2) uses its own
-        model format, so we use the HuggingFace transformers model for LoRA
-        inference and keep the faster-whisper model as fallback.
+        Loading priority:
+          1. CTranslate2 export (models/whisper_ct2/{provider_id}/) — uses the
+             full faster-whisper pipeline with beam search, temperature fallback,
+             VAD segmentation, and proper capitalization/punctuation.
+             Generate with: python scripts/export_lora_ct2.py --provider {id}
+          2. HuggingFace PEFT model — fallback when CT2 export doesn't exist.
+             Inference quality is slightly lower (simpler decoding path).
+          3. Base WhisperX — final fallback if both LoRA paths fail.
         """
         if self._model is not None:
             return
 
-        # Try to load LoRA-enhanced HuggingFace model first
         if not self._lora_failed:
             try:
-                self._load_lora_model()
+                # Prefer CTranslate2 export for full faster-whisper quality
+                if ct2_export_exists(self.provider_id):
+                    self._load_ct2_model()
+                else:
+                    logger.info(
+                        "whisperx_lora: no CT2 export found for '%s' — "
+                        "using HF PEFT path (run export_lora_ct2.py for better quality)",
+                        self.provider_id,
+                    )
+                    self._load_lora_model()
                 return
             except Exception as exc:
                 logger.warning(
@@ -121,6 +145,38 @@ class WhisperXLoRAServer(WhisperXServer):
 
         # Fallback: standard WhisperX
         super()._load_model()
+
+    def _load_ct2_model(self) -> None:
+        """Load the CTranslate2-exported merged model via whisperx.load_model().
+
+        Passing the local CT2 directory as the model name gives the full
+        faster-whisper pipeline (VAD, beam search, temperature fallback,
+        capitalization) — identical to the base WhisperX setup.
+        """
+        import whisperx
+
+        ct2_path = CT2_MODELS_DIR / self.provider_id
+
+        logger.info(
+            "whisperx_lora: loading CTranslate2 model for provider '%s' from %s",
+            self.provider_id, ct2_path,
+        )
+
+        # whisperx.load_model() accepts a local directory path as model_name
+        # when it contains a CTranslate2 model.bin — same as passing "large-v3"
+        # except it loads our LoRA-merged weights instead of the vanilla base.
+        self._model = whisperx.load_model(
+            str(ct2_path),
+            self.device,
+            compute_type=self.compute_type,
+            language=self.language,
+        )
+        self._lora_loaded = True
+
+        logger.info(
+            "whisperx_lora: CTranslate2 model loaded (provider=%s, device=%s)",
+            self.provider_id, self.device,
+        )
 
     def _load_lora_model(self) -> None:
         """Load whisper-large-v3 via HuggingFace transformers + PEFT adapter."""
