@@ -31,6 +31,8 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
@@ -83,6 +85,10 @@ class WhisperXServer(ASREngine):
         self._diarize_pipeline: Any = None
         # Cache align model per language to avoid reloading on every call
         self._align_models: dict[str, tuple[Any, Any]] = {}
+        # Serialise per-request options mutation: the GPU can only run one
+        # transcription at a time anyway, and the swap-modify-restore pattern
+        # for self._model.options is not thread-safe without this lock.
+        self._transcribe_lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "WhisperXServer":
@@ -178,24 +184,43 @@ class WhisperXServer(ASREngine):
         audio = whisperx.load_audio(path)
 
         # ── Step 1: Transcribe ────────────────────────────────────────────
+        # WhisperX's FasterWhisperPipeline.transcribe() only accepts batch_size,
+        # language, chunk_size, and display flags.  Inference-time knobs
+        # (beam_size, condition_on_previous_text, etc.) live on self._model.options
+        # (a TranscriptionOptions dataclass).  We temporarily swap them per-request
+        # so each call gets its own tuned parameters without reloading the model.
+        # The lock serialises concurrent callers — correct for a single GPU anyway.
         logger.info("whisperx: transcribing (model=%s)", self.model_size)
-        transcribe_kwargs: dict[str, Any] = {
-            "batch_size": self.batch_size,
-            "language": config.language or self.language,
-            "beam_size": config.beam_size,
-            "condition_on_previous_text": config.condition_on_previous_text,
-            "compression_ratio_threshold": config.compression_ratio_threshold,
-            "no_speech_threshold": config.no_speech_threshold,
-        }
         if config.initial_prompt:
-            transcribe_kwargs["initial_prompt"] = config.initial_prompt
-            logger.info(
-                "whisperx: initial_prompt set (%d chars)", len(config.initial_prompt)
-            )
+            logger.info("whisperx: initial_prompt set (%d chars)", len(config.initial_prompt))
         if config.hotwords:
-            transcribe_kwargs["hotwords"] = ", ".join(config.hotwords)
             logger.info("whisperx: hotwords set (%d terms)", len(config.hotwords))
-        raw_result = self._model.transcribe(audio, **transcribe_kwargs)
+
+        with self._transcribe_lock:
+            orig_options = self._model.options
+            orig_vad_onset = self._model._vad_params.get("vad_onset", 0.5)
+
+            self._model.options = replace(
+                orig_options,
+                beam_size=config.beam_size,
+                condition_on_previous_text=config.condition_on_previous_text,
+                compression_ratio_threshold=config.compression_ratio_threshold,
+                no_speech_threshold=config.no_speech_threshold,
+                initial_prompt=config.initial_prompt or orig_options.initial_prompt,
+                hotwords=", ".join(config.hotwords) if config.hotwords else orig_options.hotwords,
+            )
+            if config.vad_threshold != orig_vad_onset:
+                self._model._vad_params["vad_onset"] = config.vad_threshold
+
+            try:
+                raw_result = self._model.transcribe(
+                    audio,
+                    batch_size=self.batch_size,
+                    language=config.language or self.language,
+                )
+            finally:
+                self._model.options = orig_options
+                self._model._vad_params["vad_onset"] = orig_vad_onset
 
         # ── Step 2: Align timestamps ──────────────────────────────────────
         logger.info("whisperx: aligning word timestamps")

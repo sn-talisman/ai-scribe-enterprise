@@ -49,6 +49,10 @@ class ASRConfig:
     # no_speech_threshold: lower (e.g. 0.4) for physicians with frequent
     # pauses mid-dictation to prevent segments being dropped as silence.
     no_speech_threshold: float = 0.6
+    # vad_threshold: speech probability cutoff for Silero VAD (0.0–1.0).
+    # Lower (e.g. 0.3) for soft-spoken providers or noisy environments.
+    # Higher (e.g. 0.7) to aggressively suppress background noise.
+    vad_threshold: float = 0.5
 
 
 @dataclass

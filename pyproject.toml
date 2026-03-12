@@ -15,6 +15,12 @@ dependencies = [
     "pyyaml>=6.0",
     # Logging
     "structlog>=24.0",
+    "peft>=0.18.1",
+    "datasets>=4.7.0",
+    "soundfile>=0.13.1",
+    "audiomentations>=0.43.1",
+    "accelerate>=1.13.0",
+    "torchaudio==2.10.0",
 ]
 
 [project.optional-dependencies]

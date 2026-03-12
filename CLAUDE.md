@@ -800,8 +800,23 @@ This session wires the pipeline to a web interface so all results can be browsed
 - `client/web/`: `npm run dev` (port 3000)
 - Add both to `docker-compose.yml` for one-command startup
 
-### Session 10: ASR Quality Improvement — Physician-Specific Fine-Tuning
+### Session 10: ASR Quality Improvement — Physician-Specific Fine-Tuning ✓ COMPLETE
 This session improves transcription accuracy for individual physicians by fine-tuning Whisper on provider-specific audio and notes, capturing idiosyncratic pronunciation, accent, vocabulary, and dictation style.
+
+**Session 10 outcomes:**
+- LoRA fine-tuning implemented and evaluated. **Verdict: opt-in only** (`use_lora=True` required).
+  - Dictation: +23–27% WER degradation (labels were SOAP notes, not verbatim transcripts — LoRA learned to summarise, not transcribe)
+  - Ambient: −11–13% WER improvement (multi-speaker data gave better verbatim signal)
+  - Data flywheel thresholds: ≥30 min verbatim = minimum viable; 1–2 hr = sweet spot; 2–5 hr = strong adaptation
+- Dictation-specific inference knobs wired end-to-end through `ASRConfig` → `WhisperXServer.transcribe()`:
+  - `condition_on_previous_text=True` for dictation, `False` for ambient
+  - `hotwords` = top 100 provider custom vocabulary terms (direct logit boost)
+  - `beam_size`, `no_speech_threshold`, `compression_ratio_threshold`, `vad_threshold` all per-request
+  - Per-request options swap uses `dataclasses.replace()` + `threading.Lock()` — thread-safe for concurrent encounters
+- Pipeline v5: **4.35/5.0** quality (stable vs v4=4.38; delta within judge noise ±0.1)
+- Ambient-mode ASR optimizations deferred to Session 10b (see below)
+
+**NOTE:** Ambient ASR optimizations (`condition_on_previous_text=False` is already done; remaining: `max_speakers` provider-tunable, ambient-specific `vad_threshold` defaults) are deferred to a standalone session.
 
 **a. Data Preparation Pipeline (`scripts/prepare_asr_training_data.py`)**
 - For each sample pair (audio + gold note / transcript):
@@ -849,6 +864,13 @@ This session improves transcription accuracy for individual physicians by fine-t
   - New audio + corrected text is added to the training dataset
   - Re-fine-tuning triggered automatically when `new_samples >= 5` (configurable)
   - New LoRA adapter replaces old one; quality metrics compared before activation
+
+### Session 10b: Ambient ASR Optimizations
+Deferred from Session 10. Wire ambient-specific inference knobs that were left incomplete:
+- `max_speakers`: make provider-tunable (currently hardcoded to 5 for ambient); add to provider profile `asr_overrides`
+- `vad_threshold` defaults: lower default (0.3) for ambient to capture soft-spoken patients
+- Evaluate WER improvement on ambient samples after these changes
+- (LoRA for ambient: also deferred until ≥30 min verbatim ambient transcripts are accumulated via correction-capture loop)
 
 ### Session 11: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
