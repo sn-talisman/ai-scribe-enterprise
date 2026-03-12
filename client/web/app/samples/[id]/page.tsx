@@ -16,7 +16,7 @@ interface Props {
 
 export default async function SampleDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { version = "v4" } = await searchParams;
+  const { version = "v5" } = await searchParams;
 
   const [detail, note, comparison, gold, quality] = await Promise.allSettled([
     fetchSample(id),
@@ -71,7 +71,7 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
         {/* Version selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-400">Version:</span>
-          {(sampleDetail?.versions ?? ["v4"]).map((v) => (
+          {(sampleDetail?.versions ?? ["v5"]).map((v) => (
             <a
               key={v}
               href={`/samples/${id}?version=${v}`}

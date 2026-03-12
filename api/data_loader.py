@@ -19,8 +19,8 @@ OUTPUT_DIR = ROOT / "output"
 DATA_DIR = ROOT / "data"
 PROVIDERS_DIR = ROOT / "config" / "providers"
 
-VERSIONS = ["v4", "v3", "v2", "v1"]
-LATEST_VERSION = "v4"
+VERSIONS = ["v5", "v4", "v3", "v2", "v1"]
+LATEST_VERSION = "v5"
 
 
 # ---------------------------------------------------------------------------

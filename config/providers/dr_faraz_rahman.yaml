@@ -45,10 +45,14 @@ quality_history:
   samples: 22
   score: 4.352
   version: v5
+- date: '2026-03-12'
+  samples: 22
+  score: 4.334
+  version: v5
 quality_scores:
   v2: 4.323
   v4: 4.38
-  v5: 4.352
+  v5: 4.334
 specialty: orthopedic
 style_directives:
 - Write in third person (e.g. 'The patient presents...' not 'Patient presents')

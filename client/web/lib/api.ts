@@ -85,29 +85,29 @@ export const fetchSamples = (mode?: string) =>
 export const fetchSample = (id: string) =>
   get<SampleDetail>(`/encounters/${id}`);
 
-export const fetchNote = (id: string, version = "v4") =>
+export const fetchNote = (id: string, version = "v5") =>
   get<{ content: string }>(`/encounters/${id}/note`, { version });
 
-export const fetchComparison = (id: string, version = "v4") =>
+export const fetchComparison = (id: string, version = "v5") =>
   get<{ content: string }>(`/encounters/${id}/comparison`, { version });
 
 export const fetchGoldNote = (id: string) =>
   get<{ content: string }>(`/encounters/${id}/gold`);
 
-export const fetchSampleQuality = (id: string, version = "v4") =>
+export const fetchSampleQuality = (id: string, version = "v5") =>
   get<QualityScore & { sample_id: string }>(`/encounters/${id}/quality`, { version });
 
 // Quality
-export const fetchAggregate = (version = "v4") =>
+export const fetchAggregate = (version = "v5") =>
   get<AggregateQuality>("/quality/aggregate", { version });
 
 export const fetchTrend = () =>
   get<{ trend: AggregateQuality[] }>("/quality/trend");
 
-export const fetchDimensions = (version = "v4") =>
+export const fetchDimensions = (version = "v5") =>
   get<DimensionScore[]>("/quality/dimensions", { version });
 
-export const fetchSampleScores = (version = "v4", mode?: string) =>
+export const fetchSampleScores = (version = "v5", mode?: string) =>
   get<Array<QualityScore & { sample_id: string; mode: string; version: string }>>(
     "/quality/samples",
     mode ? { version, mode } : { version }

@@ -503,7 +503,12 @@ def _score_confidence(
         }
     found = {s.type for s in sections}
     completeness = len(expected & found) / max(len(expected), 1)
-    length_ok = all(len(s.content) >= 20 for s in sections)
+    # length_ok: require ≥70% of sections to have substantive content (≥20 chars).
+    # Using all() was too strict — valid clinical answers like "NKDA", "None", or
+    # "Denies" are < 20 chars but clinically correct. 70% catches truly sparse notes
+    # while tolerating short-answer sections (allergies, social history, etc.).
+    long_sections = sum(1 for s in sections if len(s.content) >= 20)
+    length_ok = (long_sections / max(len(sections), 1)) >= 0.70
     no_stubs = all("[LLM UNAVAILABLE]" not in s.content for s in sections)
     score = completeness * 0.6 + (0.2 if length_ok else 0.0) + (0.2 if no_stubs else 0.0)
     return round(min(score, 1.0), 3)
