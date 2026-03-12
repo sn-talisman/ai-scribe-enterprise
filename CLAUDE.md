@@ -726,14 +726,139 @@ This session adds patient demographics and clinical context into the pipeline so
 - Custom vocabulary per provider → ASR keyterm boosting
 - Per-provider quality tracking: store quality scores per provider, track improvement
 
-### Session 9: Learning Loop + Correction Capture
+### Session 9: FastAPI Backend + Web UI Viewer
+This session wires the pipeline to a web interface so all results can be browsed, reviewed, and triggered from a browser. The UI is a **viewer and dashboard only** — audio upload is supported but live recording is deferred to a later session.
+
+**Design System — Talisman Solutions Style**
+- Color palette: primary green `#00B27A`, accent purple/indigo `#6366F1`, neutral dark sidebar `#1E1B4B`
+- Card-based KPI tiles, clean sidebar navigation, combo bar+line charts for quality trends
+- Typography: Inter (sans-serif), 14px base, generous whitespace
+- All charts: Recharts (React); all tables sortable; dark sidebar + light main panel
+
+**a. FastAPI Backend (`api/`)**
+- `api/main.py` — FastAPI app with CORS, structured logging, startup/shutdown lifecycle
+- Encounter lifecycle routes (`api/routes/encounters.py`):
+  - `POST /encounters` — create encounter (provider_id, patient_id, visit_type, mode)
+  - `POST /encounters/{id}/upload` — upload audio file (multipart); triggers pipeline async
+  - `GET  /encounters/{id}` — poll status (pending / processing / complete / error)
+  - `GET  /encounters/{id}/transcript` — return cleaned transcript (Markdown)
+  - `GET  /encounters/{id}/note` — return generated clinical note (Markdown)
+  - `GET  /encounters/{id}/comparison` — return gold vs generated comparison (Markdown)
+  - `GET  /encounters/{id}/quality` — return quality report JSON + Markdown
+- Provider routes (`api/routes/providers.py`):
+  - `GET  /providers` — list all provider profiles
+  - `GET  /providers/{id}` — get profile + quality history
+  - `GET  /providers/{id}/quality-trend` — quality history as chart-ready JSON
+- Quality routes (`api/routes/quality.py`):
+  - `GET  /quality/aggregate` — overall stats across all samples + versions
+  - `GET  /quality/samples` — per-sample scores (filterable by version, provider, visit_type)
+  - `GET  /quality/dimensions` — dimension breakdown averages
+- WebSocket (`api/ws/session_events.py`): `WS /ws/encounters/{id}` — real-time pipeline progress events (stage name, % complete, log lines)
+- Background task runner: upload handler enqueues pipeline run via `asyncio.create_task`; sends WS events at each LangGraph node transition
+- Data source: reads existing `output/` directory structure + provider YAML files; no database required for this session
+
+**b. Next.js Web App (`client/web/`)**
+- `npx create-next-app@latest` with TypeScript + Tailwind CSS
+- Package additions: `recharts`, `react-markdown`, `react-syntax-highlighter`, `@radix-ui/react-tabs`, `lucide-react`
+- Sidebar navigation: Dashboard | Samples | Providers | Upload
+
+**Dashboard (`/`)**
+- KPI cards (4 across): Total Samples, Average Quality Score, Best Sample, Latest Version
+- Quality trend chart: line chart of avg score per version (v1 → v2 → v3 → v4)
+- Dimension radar chart: accuracy / completeness / no-hallucination / structure / language / readability
+- Recent encounters table: sample_id, visit_type, version, score, date
+
+**Sample Browser (`/samples`)**
+- Filterable table: version, visit_type (dictation/conversation), score range
+- Row click → Sample Detail page
+
+**Sample Detail (`/samples/[id]`)**
+- Tabs: Transcript | Clinical Note | Comparison | Quality Report
+- Transcript tab: Markdown renderer with speaker labels (DOCTOR / PATIENT) highlighted in green/indigo
+- Clinical Note tab: rendered Markdown with section headers styled as cards
+- Comparison tab: two-column table (Gold | Generated) with per-section score badge
+- Quality Report tab: dimension score bar chart + fact-check table
+- "Re-run Pipeline" button → `POST /encounters` then polls WS for progress
+
+**Upload (`/upload`)**
+- Drag-and-drop audio file zone (MP3, WAV, M4A)
+- Provider selector (dropdown from `/providers`)
+- Visit type selector (initial_evaluation / follow_up)
+- Submit → `POST /encounters` + `POST /encounters/{id}/upload` → redirects to Sample Detail with live WS progress bar
+
+**Providers (`/providers`)**
+- Provider cards: name, specialty, latest quality score badge
+- Provider detail: style directives list, custom vocabulary chips, quality history line chart
+
+**c. Integration**
+- API base URL configured via `NEXT_PUBLIC_API_URL` env var (default `http://localhost:8000`)
+- All Markdown content rendered with `react-markdown` + `remark-gfm` for tables
+- WebSocket connection managed with `useWebSocket` custom hook; progress shown as animated step indicator
+
+**d. Dev Setup**
+- `api/`: `uvicorn api.main:app --reload --port 8000`
+- `client/web/`: `npm run dev` (port 3000)
+- Add both to `docker-compose.yml` for one-command startup
+
+### Session 10: ASR Quality Improvement — Physician-Specific Fine-Tuning
+This session improves transcription accuracy for individual physicians by fine-tuning Whisper on provider-specific audio and notes, capturing idiosyncratic pronunciation, accent, vocabulary, and dictation style.
+
+**a. Data Preparation Pipeline (`scripts/prepare_asr_training_data.py`)**
+- For each sample pair (audio + gold note / transcript):
+  - Align gold transcript words to audio using WhisperX forced alignment (wav2vec2)
+  - Produce word-level `(start_time, end_time, word)` segments
+  - Segment audio into 10–30 second chunks with corresponding text
+  - Output: HuggingFace `datasets`-compatible `DatasetDict` with `{audio, sentence}` fields
+- Filtering: skip chunks with alignment confidence < 0.6 or duration > 30s
+- Augmentation: speed perturbation ±10%, additive noise at SNR 15–25 dB (using `audiomentations`)
+- Save to `data/asr_training/{provider_id}/` in HuggingFace Arrow format
+
+**b. LoRA Adapter Fine-Tuning (`scripts/finetune_whisper_lora.py`)**
+- Base model: `openai/whisper-large-v3` (same as production)
+- Method: LoRA via `peft` library — fine-tune only attention + MLP projection layers
+  - `r=8`, `lora_alpha=32`, `target_modules=["q_proj","v_proj"]`, `lora_dropout=0.05`
+- Training: HuggingFace `Seq2SeqTrainer`
+  - `per_device_train_batch_size=4`, `gradient_accumulation_steps=4`, `fp16=True`
+  - `learning_rate=1e-4`, `warmup_steps=50`, cosine LR schedule
+  - `max_steps=200` (sufficient for ~21 samples with augmentation = ~1,000 chunks)
+  - Eval every 50 steps on held-out 10% split; early stop if WER stops improving
+- Saves adapter weights to `models/whisper_lora/{provider_id}/` (< 50 MB per provider)
+- Full model NOT saved — only LoRA delta weights; base model shared across all providers
+
+**c. Provider-Specific ASR Server (`mcp_servers/asr/whisperx_lora_server.py`)**
+- Extends `WhisperXServer`; on initialization loads LoRA adapter via `peft.PeftModel.from_pretrained`
+- Engine registry detects if `models/whisper_lora/{provider_id}/` exists → uses LoRA server
+- Falls back to base WhisperX server if no adapter exists
+- Zero pipeline code changes — same `ASREngine` interface
+
+**d. Evaluation & Comparison (`scripts/eval_asr_quality.py`)**
+- Metric: Word Error Rate (WER) and Character Error Rate (CER) on held-out audio
+- Compare: base Whisper vs LoRA-fine-tuned on same audio
+- Output: `output/asr_eval_{provider_id}.md` — WER/CER table, worst-error examples, medical term accuracy breakdown
+- Medical term accuracy: compute separately for terms in provider's custom_vocabulary + specialty dict
+
+**e. Hotword / Keyword Boosting (lighter-weight alternative)**
+- For providers where < 5 minutes of audio is available (insufficient for fine-tuning):
+  - Use WhisperX `initial_prompt` with 200-word provider-specific vocabulary
+  - Use `initial_prompt` to prime the model with the provider's name, clinic, common phrases
+  - No training required; immediate improvement for rare medical terms
+- `mcp_servers/asr/whisperx_server.py`: `_build_initial_prompt(provider_profile)` constructs the prompt string from `provider.custom_vocabulary + specialty_hotwords[:50]`
+
+**f. Continuous Improvement Hook**
+- After each completed encounter, if provider has manually corrected the transcript:
+  - New audio + corrected text is added to the training dataset
+  - Re-fine-tuning triggered automatically when `new_samples >= 5` (configurable)
+  - New LoRA adapter replaces old one; quality metrics compared before activation
+
+### Session 11: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
 - Classify corrections (ASR_ERROR, STYLE, CONTENT, CODING, TEMPLATE)
 - Generate training pairs for post-processor ML model
 - Update provider style model from edit patterns
 - Feed quality evaluator with real correction data
+- Trigger ASR re-fine-tuning when enough new corrected transcripts accumulate (see Session 10f)
 
-### Session 10: S3 Trigger Pipeline (Production Ingestion)
+### Session 12: S3 Trigger Pipeline (Production Ingestion)
 - Implement S3 upload watcher: audio files uploaded to designated S3 bucket trigger pipeline
 - EventBridge rule: S3 PutObject → invoke pipeline Lambda/container
 - Pipeline reads audio from S3, processes through full graph, writes output `.md` back to S3
@@ -755,23 +880,11 @@ This session adds patient demographics and clinical context into the pipeline so
 - Implement `trigger/s3_handler.py` — the entry point invoked by EventBridge
 - All output files are Markdown, consistent with local pipeline output format
 
-### Session 11: Evidence-Linked Citations + Offline Buffering
+### Session 13: Evidence-Linked Citations + Audio Recording UI
 - Audio indexer: word-level timestamp mapping for citation links
 - Citation metadata embedded in note Markdown (link note sentences → audio timestamps)
-- Offline audio buffering strategy for client-side capture
-
-### Session 12: FastAPI Backend + Audio Endpoints
-- Create FastAPI app in `api/main.py`
-- Encounter lifecycle routes: create, upload audio, process, get note
-- WebSocket endpoint for session events
-- Serves as HTTP interface to the same pipeline (alternative to S3 trigger)
-
-### Session 13: Web App — Recording + Review UI
-- Next.js app in `client/web/`
-- Recording controls (start/stop/pause, mode toggle)
-- Note review/edit interface with rich text editor
-- Transcript viewer with speaker labels and citation playback
-- Connect to FastAPI backend
+- Add live audio recording to web UI (Session 9 deferred this): WebRTC capture → stream to backend → live transcription via NeMo streaming ASR
+- Offline audio buffering strategy for client-side capture (IndexedDB ring buffer)
 
 ### Session 14: Browser Extension (Super Fill MVP)
 - Chrome MV3 extension scaffold
@@ -799,4 +912,4 @@ This session adds patient demographics and clinical context into the pipeline so
 - Ollama must be installed and running locally before testing LLM nodes
 - For GPU nodes (WhisperX, NeMo), CUDA toolkit must be installed
 - Gold-standard notes in `data/` are the quality benchmark — every generated note is compared against them
-- Generated output versions are tracked: v1 (Session 4), v2 (Session 5), v3 (Session 7) — each should show measurable improvement
+- Generated output versions are tracked: v1 (Session 4), v2 (Session 5), v3 (Session 7), v4 (Session 8) — each should show measurable improvement
