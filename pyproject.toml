@@ -18,9 +18,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+api = [
+    # FastAPI backend (Session 9)
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]
