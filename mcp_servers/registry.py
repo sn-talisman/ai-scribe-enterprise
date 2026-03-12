@@ -155,50 +155,68 @@ class EngineRegistry:
         """Typed convenience: get an EHR adapter."""
         return self.get("ehr", server_name)  # type: ignore[return-value]
 
-    def get_asr_for_provider(self, provider_id: str) -> ASREngine:
+    def get_asr_for_provider(
+        self,
+        provider_id: str,
+        use_lora: bool = False,
+    ) -> ASREngine:
         """
         Return the best available ASR engine for a given provider.
 
-        If a trained LoRA adapter exists at models/whisper_lora/{provider_id}/,
-        returns a WhisperXLoRAServer for that provider.
-        Otherwise falls back to the default WhisperX server.
+        LoRA fine-tuning is opt-in (use_lora=True) — it is NOT loaded
+        automatically even when an adapter exists.  This is intentional:
 
-        This is the preferred way to get an ASR engine in the pipeline —
-        it transparently upgrades to provider-specific fine-tuning whenever
-        an adapter is available, with no code changes in the callers.
+        - Ambient LoRA shows ~12% WER improvement but was trained on SOAP
+          note text (summaries), not verbatim transcripts.  Dictation LoRA
+          degrades WER by ~24% for the same reason.
+        - Per-provider LoRA adapters require ≥30 min of *verbatim* transcript
+          data to be reliable.  Until that data is accumulated via the
+          correction-capture loop (see docs/architecture.md §9 and §10.3),
+          the base WhisperX model produces better results for dictation.
+        - Once a provider has sufficient verified data, set use_lora=True in
+          their profile (provider.asr_lora_enabled: true) and call this method
+          with use_lora=True from transcribe_node.py.
+
+        Args:
+            provider_id: Provider identifier.
+            use_lora:    If True, load the LoRA adapter when one exists.
+                         Defaults to False (base model always used unless
+                         explicitly requested).
         """
-        from mcp_servers.asr.whisperx_lora_server import (
-            WhisperXLoRAServer,
-            adapter_exists,
-        )
+        if use_lora:
+            from mcp_servers.asr.whisperx_lora_server import (
+                WhisperXLoRAServer,
+                adapter_exists,
+            )
 
-        cache_key = ("asr", f"whisperx_lora/{provider_id}")
-        if cache_key in self._cache:
-            return self._cache[cache_key]  # type: ignore[return-value]
+            cache_key = ("asr", f"whisperx_lora/{provider_id}")
+            if cache_key in self._cache:
+                return self._cache[cache_key]  # type: ignore[return-value]
 
-        if adapter_exists(provider_id):
-            log.info(
-                "registry: LoRA adapter found for provider '%s' — using WhisperXLoRAServer",
+            if adapter_exists(provider_id):
+                log.info(
+                    "registry: LoRA requested for provider '%s' — loading WhisperXLoRAServer",
+                    provider_id,
+                )
+                asr_cfg = get_asr_config()
+                base_cfg = asr_cfg.get("servers", {}).get("whisperx", {})
+                engine = WhisperXLoRAServer.for_provider(
+                    provider_id=provider_id,
+                    device=base_cfg.get("device", "cuda"),
+                    compute_type=base_cfg.get("compute_type", "float16"),
+                    diarization=base_cfg.get("diarization", True),
+                    hf_token=base_cfg.get("hf_token"),
+                )
+                self._cache[cache_key] = engine
+                return engine
+
+            log.warning(
+                "registry: use_lora=True requested for provider '%s' but no adapter found — "
+                "falling back to base WhisperX",
                 provider_id,
             )
-            # Build from base ASR config + provider override
-            asr_cfg = get_asr_config()
-            base_cfg = asr_cfg.get("servers", {}).get("whisperx", {})
-            engine = WhisperXLoRAServer.for_provider(
-                provider_id=provider_id,
-                device=base_cfg.get("device", "cuda"),
-                compute_type=base_cfg.get("compute_type", "float16"),
-                diarization=base_cfg.get("diarization", True),
-                hf_token=base_cfg.get("hf_token"),
-            )
-            self._cache[cache_key] = engine
-            return engine
 
-        # No adapter — fall back to default WhisperX
-        log.debug(
-            "registry: no LoRA adapter for provider '%s' — using base WhisperX",
-            provider_id,
-        )
+        # Default path: always use base WhisperX
         return self.get_asr()
 
     # ── Health checks ────────────────────────────────────────────────────

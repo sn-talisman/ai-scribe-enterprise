@@ -67,6 +67,28 @@ asr:
       max_speakers: 5
       language: "en"
 
+      # ── Provider-specific LoRA fine-tuning ─────────────────────────────
+      # Disabled by default. Enable per-provider once ≥30 min of *verbatim*
+      # transcript data has been collected via the correction-capture loop.
+      # See docs/architecture.md §10.3 for the data flywheel strategy.
+      # To enable for a specific provider, set asr_lora_enabled: true in
+      # their provider profile (config/providers/{id}.yaml).
+      lora_enabled: false               # global kill-switch (false = base model always used)
+
+      # ── Provider-specific inference knobs (set per provider profile) ───
+      # These are exposed here for documentation; per-provider overrides
+      # live in config/providers/{provider_id}.yaml under asr_overrides:
+      #
+      # condition_on_previous_text: true   # true for dictation, false for ambient
+      #                                    # (ambient: prevents patient speech conditioning)
+      # beam_size: 5                       # increase for accented/noisy audio
+      # vad_filter: true                   # VAD pre-filter before transcription
+      # vad_threshold: 0.5                 # lower for soft-spoken providers (0.3–0.7)
+      # no_speech_threshold: 0.6           # lower for providers with frequent pauses
+      # compression_ratio_threshold: 2.4   # raise for repetitive clinical phrasing
+      # hotwords: []                       # per-provider token-level boost (specialty terms)
+      #                                    # more targeted than initial_prompt prefix
+
     nemo_streaming:                     # Real-time streaming ASR
       type: nemo
       model: "nvidia/nemotron-speech-streaming-en-0.6b"

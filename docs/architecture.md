@@ -937,7 +937,99 @@ ai-scribe/
 
 ---
 
-## 12. Getting Started (Claude Code Sequence)
+## 12. Provider-Specific ASR Optimization
+
+### 12.1 LoRA Fine-Tuning — Decision Record
+
+**Status: Infrastructure complete, disabled by default.**
+
+The LoRA fine-tuning pipeline (Session 10) was built and evaluated on 22 samples (10 dictation, 12 ambient). Results revealed a fundamental training data problem:
+
+| Mode | Base WER | LoRA WER | Delta |
+|------|----------|----------|-------|
+| Dictation (trained) | 0.6247 | 0.7714 | +23.5% worse |
+| Ambient (not trained) | 1.7455 | 1.5429 | **-11.6% better** |
+
+**Root cause:** The training labels were gold SOAP notes — clinical *summaries*, not verbatim transcripts of what was spoken. The model learned to generate structured clinical language ("The patient presents...") rather than faithfully transcribe spoken words. This:
+- **Hurts dictation** (0/10 samples improved): SOAP-style output diverges from actual spoken dictation → higher WER vs SOAP reference
+- **Helps ambient** (10/12 samples improved): clinical vocabulary bias reduces medical terminology errors in conversational recordings
+
+**What is needed for dictation LoRA to work:**
+- Verbatim transcripts (word-for-word of what was spoken), not SOAP summaries
+- ≥30 minutes per provider (minimum viable)
+- 1–2 hours per provider (sweet spot for LoRA)
+- These are accumulated via the correction-capture learning loop (§9)
+
+**Deployment decision:**
+- LoRA is disabled in the main path (`lora_enabled: false` in engines.yaml)
+- `registry.get_asr_for_provider()` requires `use_lora=True` to activate it
+- Ambient LoRA can be selectively enabled per-provider once verified; dictation LoRA should wait for verbatim data
+
+**Enabling per provider (future):**
+```python
+# In transcribe_node.py, after correction data is sufficient:
+engine = registry.get_asr_for_provider(
+    provider_id,
+    use_lora=provider_profile.asr_lora_enabled,  # set in provider YAML
+)
+```
+
+### 12.2 Data Flywheel for Provider LoRA
+
+The correction-capture loop (§9) is the path to meaningful per-provider LoRA:
+
+```
+Provider dictates → Whisper transcribes → Provider corrects output
+       ↓
+Correction captured as (audio_segment, corrected_text) pair
+       ↓
+After ~10-15 sessions: 30 min verbatim data → trigger LoRA re-train
+       ↓
+Better model → fewer corrections → faster accumulation
+```
+
+**Milestones per provider:**
+
+| Data collected | Expected WER gain | Notes |
+|----------------|------------------|-------|
+| 30 min (10–15 sessions) | 5–10% dictation | Minimum viable |
+| 1–2 hours (25–40 sessions) | 10–20% dictation | Sweet spot |
+| 2–5 hours (50–80 sessions) | 15–25% dictation | Near-maximum for LoRA |
+| >5 hours | Diminishing returns | Consider full fine-tune |
+
+Ambient LoRA does not need verbatim transcripts — SOAP note labels work because the reference for ambient WER is already a summary document. The current ambient adapter (-11.6% WER) can be deployed today for providers with significant ambient encounter volume.
+
+### 12.3 Other Provider-Specific ASR Optimizations
+
+Beyond LoRA, the following knobs are available per provider via `asr_overrides` in provider profiles. None require retraining — they tune inference behavior only.
+
+**High impact, implement next:**
+
+| Parameter | Default | When to change | Effect |
+|-----------|---------|----------------|--------|
+| `condition_on_previous_text` | `true` | Set `false` for ambient | Prevents patient speech patterns from conditioning subsequent chunk decoding; avoids hallucinated continuation of patient turns |
+| `hotwords` | `[]` | Specialty terms list | Direct logit boost for specific tokens during beam search — more targeted than `initial_prompt` prefix; use for rare drug names, anatomical terms, provider-specific phrases |
+| `vad_threshold` | `0.5` | Soft-spoken providers, noisy clinics | Lower (0.3) prevents speech segments from being dropped by VAD; raise (0.7) in very clean environments to skip background noise |
+| `max_speakers` | `5` | Known encounter type | Solo practitioner + patient = 2; family visits = 3; reduces diarization confusion when speaker count is predictable |
+
+**Medium impact:**
+
+| Parameter | Default | When to change |
+|-----------|---------|----------------|
+| `beam_size` | `5` | Increase to 8–10 for strongly accented providers; decrease to 1 for very clean dictation (latency optimization) |
+| `no_speech_threshold` | `0.6` | Lower (0.4) for providers with frequent pauses mid-dictation (prevents "no speech" false positives) |
+| `compression_ratio_threshold` | `2.4` | Raise (2.8) for providers who use repetitive clinical phrasing ("the patient denies X, the patient denies Y") |
+| `noise_suppression` | `moderate` | Set `aggressive` for providers recording in busy clinics, ERs, or with loud HVAC |
+
+**Lower impact / future:**
+
+- `suppress_tokens`: suppress non-English language tokens for English-only providers (~2–5% speedup)
+- Post-processor thresholds: per-provider CTC stutter aggressiveness (medasr_postprocessor.py stages 4–7)
+- wav2vec2 alignment model: accent-specific models available for providers with strong regional accents
+
+---
+
+## 13. Getting Started (Claude Code Sequence)
 
 ```
 SESSION 1:  Project scaffolding + state schema + LangGraph skeleton
