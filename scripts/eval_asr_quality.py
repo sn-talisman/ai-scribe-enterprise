@@ -338,6 +338,30 @@ def render_markdown_report(report: EvalReport) -> str:
         f"| **WER** (lower=better) | {fmt(base_wer)} | {fmt(lora_wer)} | {delta_wer(base_wer, lora_wer)} |",
         f"| **CER** (lower=better) | {fmt(base_cer)} | {fmt(lora_cer)} | {delta_wer(base_cer, lora_cer)} |",
         f"| **Med. Term Acc** (higher=better) | {fmt(base_mta)} | {fmt(lora_mta)} | {delta_mta(base_mta, lora_mta)} |",
+    ]
+
+    # ── Per-mode breakdown ────────────────────────────────────────────────────
+    # Dictation and ambient are fundamentally different tasks; mixing them masks
+    # the true impact of dictation-trained LoRA on dictation samples.
+    for mode_label, mode_key in [("Dictation samples", "dictation"), ("Ambient samples", "ambient")]:
+        mode_samples = [s for s in report.samples if s.mode == mode_key]
+        if not mode_samples:
+            continue
+        m_base_wer = sum(s.base_wer for s in mode_samples if s.base_wer is not None) / len(mode_samples)
+        m_lora_wer = (
+            sum(s.lora_wer for s in mode_samples if s.lora_wer is not None) / len(mode_samples)
+            if any(s.lora_wer is not None for s in mode_samples) else None
+        )
+        lines += [
+            "",
+            f"### {mode_label} (n={len(mode_samples)})",
+            "",
+            "| Metric | Base | LoRA | Delta |",
+            "|--------|------|------|-------|",
+            f"| WER | {fmt(m_base_wer)} | {fmt(m_lora_wer)} | {delta_wer(m_base_wer, m_lora_wer)} |",
+        ]
+
+    lines += [
         "",
         "---",
         "",
@@ -530,12 +554,25 @@ def main():
     print(f"{'='*50}")
     print(f"Samples:      {len(report.samples)}")
     print(f"LoRA adapter: {'Yes' if report.has_lora else 'No'}")
-    print(f"\nBase model:   WER={report.base_avg_wer}, CER={report.base_avg_cer}, MTA={report.base_avg_mta}")
+    print(f"\nOverall (all modes):")
+    print(f"  Base:  WER={report.base_avg_wer:.4f}  CER={report.base_avg_cer:.4f}")
     if report.has_lora:
-        print(f"LoRA model:   WER={report.lora_avg_wer}, CER={report.lora_avg_cer}, MTA={report.lora_avg_mta}")
-        if report.base_avg_wer and report.lora_avg_wer:
-            improvement = (report.base_avg_wer - report.lora_avg_wer) / report.base_avg_wer * 100
-            print(f"\nWER improvement: {improvement:.1f}%")
+        print(f"  LoRA:  WER={report.lora_avg_wer:.4f}  CER={report.lora_avg_cer:.4f}")
+
+    # Mode-split summary — the critical metric for LoRA trained on dictation only
+    for mode_label, mode_key in [("Dictation (trained)", "dictation"), ("Ambient (not trained)", "ambient")]:
+        mode_samples = [s for s in report.samples if s.mode == mode_key]
+        if not mode_samples:
+            continue
+        m_base = sum(s.base_wer for s in mode_samples if s.base_wer is not None) / len(mode_samples)
+        print(f"\n{mode_label} (n={len(mode_samples)}):")
+        print(f"  Base WER: {m_base:.4f}")
+        if report.has_lora:
+            m_lora = sum(s.lora_wer for s in mode_samples if s.lora_wer is not None) / len(mode_samples)
+            delta = m_lora - m_base
+            pct = -delta / m_base * 100
+            tag = f"↑{pct:.1f}% improvement" if pct > 0 else f"↓{abs(pct):.1f}% worse"
+            print(f"  LoRA WER: {m_lora:.4f}  ({tag})")
 
 
 if __name__ == "__main__":

@@ -59,34 +59,123 @@ MIN_ALIGNMENT_CONFIDENCE = 0.6   # skip word segments below this confidence
 
 def extract_plain_text(markdown_path: Path) -> str:
     """
-    Strip Markdown formatting from a SOAP note to produce plain text suitable
-    for forced alignment.
+    Extract clean clinical narrative from a SOAP note for use as an ASR
+    reference / forced-alignment target.
 
-    Removes:
-      - Markdown headers (# ## ### ...)
-      - Bold/italic markers
-      - Table pipes and formatting rows
-      - HTML tags
-      - Empty lines (collapsed)
+    Strips all note-specific artifacts so the result approximates what the
+    provider actually *said* rather than the structured document format:
+
+    Removed (demographics / metadata):
+      - Key–value header lines in both formats:
+          FIRST NAME:  Shatia          (dictation format)
+          **FIRST NAME:** Shatia       (ambient/markdown format)
+      - Standalone ALL-CAPS annotation lines:
+          INTERNAL USE ONLY, DICTATED BUT NOT READ, etc.
+      - Visit-type banner lines:
+          FOLLOW-UP EVALUATION, ASSUME CARE EVALUATION, INITIAL EVALUATION, etc.
+      - Document footer lines:
+          Provider signature, Transcriptionist/DD/Transcription Date lines
+          [DICTATED BUT NOT READ TO EXPEDITE REPORT.  SIGNED REPORT ON FILE.]
+
+    Removed (structure / formatting):
+      - Markdown section headers:  # Chief Complaint,  ## History, etc.
+      - Inline SOAP section labels:  SUBJECTIVE:, OBJECTIVE:, ASSESSMENT:, PLAN:
+      - Bold/italic markers, table pipes, HTML tags
+
+    Kept:
+      - Narrative prose — the sentences the provider dictated or spoke
     """
     text = markdown_path.read_text(encoding="utf-8", errors="replace")
 
-    # Remove markdown headers
+    # ── Inline SOAP section labels ────────────────────────────────────────────
+    # Strip FIRST so that "SUBJECTIVE:  The patient..." becomes "  The patient..."
+    # before the ALL-CAPS demographic regex runs (otherwise it would eat the
+    # whole line because SUBJECTIVE is all-caps).
+    text = re.sub(
+        r"(?i)\b(subjective|objective|assessment|plan|history of present illness"
+        r"|past medical history|past surgical history|social history|family history"
+        r"|review of systems|physical exam(?:ination)?|diagnostic(?:s| exam)?|chief complaint"
+        r"|medications?|allergies?|hpi|ros|vitals?)\s*:",
+        "",
+        text,
+    )
+
+    # ── Demographics / metadata ───────────────────────────────────────────────
+    # Dictation format ALL-CAPS:  FIRST NAME:  value, PROVIDER LAST:  value, etc.
+    text = re.sub(
+        r"^[ \t]*[A-Z][A-Z /()]+:[ \t]+[^\n]*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    # Dictation format mixed-case with 2+ spaces after colon:
+    #   Date of Birth:  08/31/1993
+    #   Record Number:  1.224889.0
+    #   Place of Exam:  Columbia
+    # Two-space gap is the consistent indicator in these dictation templates.
+    text = re.sub(
+        r"^[ \t]*[A-Za-z][A-Za-z0-9 /()]{2,30}:[ \t]{2,}[^\n]*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    # Ambient/markdown format:  **Field Name:** value
+    text = re.sub(r"\*\*[^*]+:\*\*[^\n]*", "", text)
+
+    # ── Document annotations (all-caps standalone lines) ─────────────────────
+    # e.g. "INTERNAL USE ONLY", "DICTATED BUT NOT READ TO EXPEDITE REPORT..."
+    text = re.sub(r"^\s*[A-Z][A-Z .,'()\[\]-]{8,}\s*$", "", text, flags=re.MULTILINE)
+
+    # ── Visit-type banners ────────────────────────────────────────────────────
+    # Only match short standalone banner lines (≤8 words), not clinical sentences
+    # that happen to start with "initial" or "follow-up".
+    text = re.sub(
+        r"(?i)^[ \t]*((?:initial|follow.?up|assume care|discharge|re-?evaluation"
+        r"|evaluation|consultation|progress note)(?:[ \t]+\S+){0,6})\s*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+
+    # ── Footer: provider signature block ─────────────────────────────────────
+    # Match short lines (≤60 chars) that end with a credential — these are
+    # standalone signature lines like "Faraz Rahman, D.O." not mid-sentence
+    # occurrences like "Chinery, M.D.'s internal medicine service..."
+    text = re.sub(
+        r"^[ \t]*[^\n]{0,60}(D\.O\.|M\.D\.|D\.C\.|PA-?C?|N\.P\.)\s*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        r"(?i)^[ \t]*(transcriptionist|dd:|transcription date)[^\n]*$",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
+    # Bracketed document control lines
+    text = re.sub(r"\[[^\]]{10,}\]", "", text)
+
+    # ── Markdown formatting ───────────────────────────────────────────────────
+    # Section headers: # Title
     text = re.sub(r"^#+\s+", "", text, flags=re.MULTILINE)
-    # Remove bold/italic
+    # Bold/italic
     text = re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", text)
     text = re.sub(r"_{1,3}(.*?)_{1,3}", r"\1", text)
-    # Remove table separators (---|---)
+    # Table separators and pipes
     text = re.sub(r"^\|[-:| ]+\|?\s*$", "", text, flags=re.MULTILINE)
-    # Remove table pipes (keep the cell content)
     text = re.sub(r"\|", " ", text)
-    # Remove HTML tags
+    # HTML tags
     text = re.sub(r"<[^>]+>", "", text)
-    # Remove metadata lines like **Date:** ... **Provider:** ...
-    text = re.sub(r"\*\*[^*]+:\*\*[^\n]*", "", text)
-    # Collapse extra whitespace
+
+    # ── Collapse whitespace ───────────────────────────────────────────────────
     text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{2,}", "\n", text)
+    # Drop short residual lines (likely stray labels or single words)
+    lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if len(ln.split()) >= 4]
+    text = " ".join(lines)
+    # Collapse multiple spaces
+    text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 
 
@@ -204,32 +293,65 @@ def augment_audio(audio_array, sample_rate: int = 16000):
 # Main pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-def discover_samples(provider_id: str) -> list[dict]:
+def discover_samples(
+    provider_id: str,
+    modes: list[str] | None = None,
+) -> list[dict]:
     """
     Find all audio+gold-note sample pairs available for this provider.
     Returns list of {audio_path, gold_path, sample_id, mode}.
-    """
-    pairs = []
 
-    for mode, audio_name, gold_names in [
-        ("dictation", "dictation.mp3", ["soap_final.md"]),
-        ("ambient",   "conversation.mp3", ["soap_initial.md", "soap_final.md"]),
-    ]:
-        data_subdir = DATA_DIR / ("dictation" if mode == "dictation" else "conversations")
-        if not data_subdir.exists():
+    Args:
+        modes: Which recording modes to include.  Defaults to ["dictation"] only.
+               Pass ["dictation", "ambient"] to include ambient samples — but note
+               that ambient samples require diarization before forced alignment can
+               produce reliable (audio, gold-text) training pairs.  Until a
+               diarization-aware pipeline is built, ambient samples are excluded
+               to avoid training on mixed physician+patient audio against a
+               physician-only reference.
+    """
+    if modes is None:
+        modes = ["dictation"]
+
+    mode_config = {
+        "dictation": {
+            "audio_names": ["dictation.mp3"],
+            "gold_names": ["soap_final.md"],
+            "data_subdir": DATA_DIR / "dictation",
+        },
+        "ambient": {
+            "audio_names": ["conversation.mp3"],
+            "gold_names": ["soap_initial.md", "soap_final.md"],
+            "data_subdir": DATA_DIR / "conversations",
+        },
+    }
+
+    pairs = []
+    for mode in modes:
+        cfg = mode_config.get(mode)
+        if cfg is None:
+            log.warning("Unknown mode '%s' — skipping", mode)
             continue
+        data_subdir = cfg["data_subdir"]
+        if not data_subdir.exists():
+            log.warning("Data directory not found: %s — skipping mode '%s'", data_subdir, mode)
+            continue
+
         for sample_dir in sorted(data_subdir.iterdir()):
             if not sample_dir.is_dir():
                 continue
-            audio = sample_dir / audio_name
-            if not audio.exists():
-                # Try alternative audio name for conversations
-                audio = sample_dir / "conversation.mp3"
-            if not audio.exists():
+
+            audio = None
+            for audio_name in cfg["audio_names"]:
+                candidate = sample_dir / audio_name
+                if candidate.exists():
+                    audio = candidate
+                    break
+            if audio is None:
                 continue
 
             gold = None
-            for name in gold_names:
+            for name in cfg["gold_names"]:
                 if (sample_dir / name).exists():
                     gold = sample_dir / name
                     break
@@ -243,7 +365,10 @@ def discover_samples(provider_id: str) -> list[dict]:
                 "mode": mode,
             })
 
-    log.info("Discovered %d sample pairs for provider %s", len(pairs), provider_id)
+    log.info(
+        "Discovered %d sample pairs for provider %s (modes: %s)",
+        len(pairs), provider_id, modes,
+    )
     return pairs
 
 
@@ -257,55 +382,72 @@ def process_sample(
     Run forced alignment on one sample and return a list of chunk records.
     Each record: {audio_file, text, duration_s, sample_id, mode}.
     """
-    import whisperx  # lazy import — requires GPU env
-
     sample_id = sample["sample_id"]
     audio_path = sample["audio_path"]
     gold_path = sample["gold_path"]
 
     log.info("Processing sample %s (%s)", sample_id, sample["mode"])
 
-    # 1. Extract plain text from gold note
+    # 1. Extract clean clinical narrative from gold note.
+    #    This is the TRAINING TARGET — what we want the model to produce.
+    #    For dictation, this closely matches what the physician actually said
+    #    (minus structural artifacts stripped by extract_plain_text).
     plain_text = extract_plain_text(gold_path)
     if len(plain_text) < 50:
         log.warning("  Gold note too short (%d chars) — skipping", len(plain_text))
         return []
 
+    log.info("  Gold text: %d words", len(plain_text.split()))
+
+    if dry_run:
+        # Estimate ~1 chunk per 20 words of gold text
+        estimated_chunks = max(1, len(plain_text.split()) // 20)
+        log.info("  DRY RUN — estimated %d chunks", estimated_chunks)
+        return [{"dry_run": True, "sample_id": sample_id, "chunk_count": estimated_chunks}]
+
+    import whisperx  # lazy import — requires GPU env
+
     # 2. Load audio
     audio = whisperx.load_audio(str(audio_path))
+    audio_duration_s = len(audio) / 16000
 
-    # 3. Forced alignment (wav2vec2) — align gold note text to audio timestamps
-    #    We first run a quick transcription to get segment timestamps, then re-align
-    #    the gold text within those segments.
-    log.info("  Running base transcription for segment timing…")
+    # 3. Forced alignment of GOLD TEXT against audio (wav2vec2).
+    #
+    #    We pass the gold text as a single pseudo-segment spanning the whole
+    #    audio.  WhisperX's wav2vec2 aligner finds where each word in the gold
+    #    text occurs in the audio, giving us accurate word-level timestamps.
+    #
+    #    This is the critical correctness fix vs using Whisper's own transcript
+    #    as labels.  Self-labeling with Whisper output would teach the model to
+    #    reproduce its own errors rather than converge toward the gold text.
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
 
-    model = whisperx.load_model("large-v3", device, compute_type=compute_type)
-    result = model.transcribe(audio, batch_size=16, language="en")
-    del model  # free GPU memory
-
-    if not result.get("segments"):
-        log.warning("  No segments from base transcription — skipping")
-        return []
-
-    log.info("  Aligning word timestamps…")
+    log.info("  Running wav2vec2 forced alignment of gold text…")
     align_model, align_metadata = whisperx.load_align_model(
         language_code="en", device=device
     )
-    aligned = whisperx.align(
-        result["segments"], align_model, align_metadata, audio, device,
-        return_char_alignments=False,
-    )
+
+    # Feed gold text as a single segment covering full audio duration
+    gold_segments = [{"start": 0.0, "end": audio_duration_s, "text": plain_text}]
+    try:
+        aligned = whisperx.align(
+            gold_segments, align_model, align_metadata, audio, device,
+            return_char_alignments=False,
+        )
+    except Exception as exc:
+        log.warning("  Forced alignment failed (%s) — skipping %s", exc, sample_id)
+        del align_model
+        return []
     del align_model
 
-    # 4. Chunk into 10–30s segments
+    if not aligned.get("segments"):
+        log.warning("  No aligned segments produced — skipping %s", sample_id)
+        return []
+
+    # 4. Chunk into 10–30s segments, preserving gold text as the label
     chunks = chunk_segments(aligned["segments"])
     log.info("  Got %d chunks from sample %s", len(chunks), sample_id)
-
-    if dry_run:
-        return [{"dry_run": True, "sample_id": sample_id, "chunk_count": len(chunks)}]
 
     # 5. Extract audio segments + (optionally) augment
     sample_out = out_dir / sample_id
@@ -353,6 +495,7 @@ def build_dataset(
     provider_id: str,
     augment: bool = False,
     dry_run: bool = False,
+    modes: list[str] | None = None,
 ) -> None:
     """
     Full pipeline: discover → align → chunk → split → save HuggingFace dataset.
@@ -360,7 +503,7 @@ def build_dataset(
     out_dir = OUTPUT_TRAINING_DIR / provider_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = discover_samples(provider_id)
+    samples = discover_samples(provider_id, modes=modes)
     if not samples:
         log.error("No samples found. Check data/dictation/ and data/conversations/")
         return
@@ -402,12 +545,14 @@ def build_dataset(
     total_hours = sum(r.get("duration_s", 0) for r in all_records) / 3600
     manifest = {
         "provider_id": provider_id,
+        "modes": modes or ["dictation"],
         "samples_used": len(samples),
         "total_chunks": len(all_records),
         "train_chunks": len(train_records),
         "eval_chunks": len(eval_records),
         "total_hours": round(total_hours, 3),
         "augmented": augment,
+        "label_source": "gold_note",  # forced-aligned gold text, not Whisper output
         "dataset_path": str(save_path),
     }
     manifest_path = out_dir / "manifest.json"
@@ -439,12 +584,23 @@ def main():
         "--dry-run", action="store_true",
         help="Show what would be produced without running alignment or writing files",
     )
+    parser.add_argument(
+        "--modes", nargs="+", default=["dictation"],
+        choices=["dictation", "ambient"],
+        help=(
+            "Recording modes to include in training data (default: dictation only). "
+            "Ambient mode requires diarization-aware preprocessing and is not yet "
+            "supported — physician and patient speech must be separated before "
+            "forced alignment against the gold note can produce reliable labels."
+        ),
+    )
     args = parser.parse_args()
 
     build_dataset(
         provider_id=args.provider,
         augment=args.augment,
         dry_run=args.dry_run,
+        modes=args.modes,
     )
 
 

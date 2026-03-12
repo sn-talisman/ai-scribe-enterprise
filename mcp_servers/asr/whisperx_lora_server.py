@@ -237,6 +237,8 @@ class _HFWhisperAdapter:
                     input_features=input_features,
                     forced_decoder_ids=forced_ids,
                     max_new_tokens=225,
+                    num_beams=5,            # match faster-whisper default beam size
+                    no_repeat_ngram_size=3, # suppress repetition common in greedy decode
                 )
 
             transcription = self._processor.batch_decode(
