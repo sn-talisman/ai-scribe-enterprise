@@ -216,16 +216,19 @@ def finetune(
     # ── Load base model ──────────────────────────────────────────────────────
     log.info("Loading base model %s…", BASE_MODEL)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    # Use bf16 on GPU — avoids fp16 dtype mismatch in Whisper eval generation
+    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
+    dtype = torch.bfloat16 if use_bf16 else (torch.float16 if device == "cuda" else torch.float32)
 
     model = WhisperForConditionalGeneration.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
         device_map="auto" if device == "cuda" else None,
     )
-    model.config.forced_decoder_ids = None
-    model.config.suppress_tokens = []
     model.config.use_cache = False  # required for gradient checkpointing
+    # transformers v5: generation control must live on generation_config only
+    model.generation_config.forced_decoder_ids = None
+    model.generation_config.suppress_tokens = []
 
     # ── Apply LoRA ───────────────────────────────────────────────────────────
     log.info("Applying LoRA config (r=8, alpha=32, targets=q_proj+v_proj)…")
@@ -252,16 +255,19 @@ def finetune(
         learning_rate=lr,
         warmup_steps=warmup_steps,
         lr_scheduler_type="cosine",
-        fp16=torch.cuda.is_available(),
-        evaluation_strategy="steps",
+        fp16=not use_bf16 and device == "cuda",
+        bf16=use_bf16,
+        bf16_full_eval=use_bf16,
+        eval_strategy="steps",
         eval_steps=50,
         save_strategy="steps",
         save_steps=50,
         load_best_model_at_end=True,
-        metric_for_best_model="wer",
+        metric_for_best_model="eval_loss",
         greater_is_better=False,
-        predict_with_generate=True,
-        generation_max_length=225,
+        # disable generation during training eval — dtype mismatch in transformers v5
+        # WER is computed after training by eval_asr_quality.py
+        predict_with_generate=False,
         logging_steps=10,
         report_to="none",  # no wandb/tensorboard by default
         gradient_checkpointing=True,
@@ -280,7 +286,7 @@ def finetune(
         train_dataset=ds["train"],
         eval_dataset=ds["eval"],
         data_collator=collator,
-        compute_metrics=compute_metrics_fn(processor),
+        compute_metrics=None,  # WER computed post-training by eval_asr_quality.py
         processing_class=processor.feature_extractor,
     )
 

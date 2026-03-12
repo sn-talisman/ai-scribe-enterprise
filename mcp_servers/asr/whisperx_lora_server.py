@@ -234,7 +234,7 @@ class _HFWhisperAdapter:
                     language=language, task="transcribe"
                 )
                 generated_ids = self._model.generate(
-                    input_features,
+                    input_features=input_features,
                     forced_decoder_ids=forced_ids,
                     max_new_tokens=225,
                 )
