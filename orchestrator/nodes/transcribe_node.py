@@ -239,13 +239,11 @@ def transcribe_node(state: EncounterState) -> dict:
     except Exception:
         pass  # non-critical; proceed without prompt
 
-    # hotwords: specialty terms for direct logit boost (more targeted than initial_prompt)
-    hotwords: list[str] = []
-    try:
-        custom = getattr(state.provider_profile, "custom_vocabulary", None) or []
-        hotwords = list(custom[:100])  # cap to avoid token budget overflow
-    except Exception:
-        pass
+    # hotwords: specialty terms for direct logit boost (more targeted than initial_prompt).
+    # Cap at 100 to stay within faster-whisper's token budget for hotword boosting.
+    # initial_prompt already includes these terms as a decoder prefix; hotwords boost
+    # them further at the beam-search logit level.
+    custom_vocab: list[str] = getattr(state.provider_profile, "custom_vocabulary", []) or []
 
     # condition_on_previous_text: True for dictation (context flows across 30s chunks),
     # False for ambient (patient speech must not condition physician chunk decoding).
@@ -255,8 +253,8 @@ def transcribe_node(state: EncounterState) -> dict:
         language="en",
         diarize=diarize,
         max_speakers=5 if diarize else 1,
-        custom_vocabulary=getattr(state.provider_profile, "custom_vocabulary", []) or [],
-        hotwords=hotwords,
+        custom_vocabulary=custom_vocab,
+        hotwords=custom_vocab[:100],
         initial_prompt=initial_prompt,
         condition_on_previous_text=condition_on_previous,
     )
