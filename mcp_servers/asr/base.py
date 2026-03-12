@@ -32,6 +32,8 @@ class ASRConfig:
     # Quality
     beam_size: int = 5
     vad_filter: bool = True
+    # Vocabulary priming — passed as initial_prompt to faster-whisper decoder
+    initial_prompt: Optional[str] = None
 
 
 @dataclass

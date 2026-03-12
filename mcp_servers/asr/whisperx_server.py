@@ -179,11 +179,16 @@ class WhisperXServer(ASREngine):
 
         # ── Step 1: Transcribe ────────────────────────────────────────────
         logger.info("whisperx: transcribing (model=%s)", self.model_size)
-        raw_result = self._model.transcribe(
-            audio,
-            batch_size=self.batch_size,
-            language=config.language or self.language,
-        )
+        transcribe_kwargs: dict[str, Any] = {
+            "batch_size": self.batch_size,
+            "language": config.language or self.language,
+        }
+        if config.initial_prompt:
+            transcribe_kwargs["initial_prompt"] = config.initial_prompt
+            logger.info(
+                "whisperx: initial_prompt set (%d chars)", len(config.initial_prompt)
+            )
+        raw_result = self._model.transcribe(audio, **transcribe_kwargs)
 
         # ── Step 2: Align timestamps ──────────────────────────────────────
         logger.info("whisperx: aligning word timestamps")
@@ -265,6 +270,63 @@ class WhisperXServer(ASREngine):
             supported_formats=_SUPPORTED_FORMATS,
             max_audio_duration_s=None,  # no hard limit
         )
+
+    # ── Hotword / initial-prompt boosting ───────────────────────────────────
+
+    def _build_initial_prompt(self, provider_profile: Optional[Any] = None) -> Optional[str]:
+        """
+        Build an initial_prompt string that primes Whisper with provider-specific
+        vocabulary and context.
+
+        WhisperX / faster-whisper passes this as a prefix to the decoder so the
+        model is more likely to recognise rare medical terms, the provider's name,
+        and their clinic.
+
+        Args:
+            provider_profile: ProviderProfile Pydantic model (or None).
+
+        Returns:
+            A comma-separated vocabulary string capped at ~200 tokens, or None.
+        """
+        if provider_profile is None:
+            return None
+
+        terms: list[str] = []
+
+        # Provider identity context (helps diarization label matching)
+        if getattr(provider_profile, "name", None):
+            terms.append(provider_profile.name)
+        if getattr(provider_profile, "credentials", None):
+            terms.append(provider_profile.credentials)
+
+        # Custom vocabulary (provider-specific medical terms)
+        custom = getattr(provider_profile, "custom_vocabulary", []) or []
+        terms.extend(custom[:50])
+
+        # Specialty hotwords from the data dictionary server (if available)
+        specialty = getattr(provider_profile, "specialty", None)
+        if specialty and specialty != "general":
+            try:
+                from mcp_servers.data.medical_dict_server import get_dict_server
+                hotwords = get_dict_server().get_hotwords(specialty, max_terms=150)
+                terms.extend(hotwords)
+            except Exception:
+                pass  # dictionary server not loaded — skip silently
+
+        if not terms:
+            return None
+
+        # Deduplicate, preserve order, cap at 200 words
+        seen: set[str] = set()
+        unique: list[str] = []
+        for t in terms:
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                unique.append(t)
+            if len(unique) >= 200:
+                break
+
+        return ", ".join(unique)
 
     # ── Sync wrapper (for use in LangGraph sync nodes) ─────────────────────
 

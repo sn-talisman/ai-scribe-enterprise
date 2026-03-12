@@ -57,9 +57,25 @@ def _default_engine_factory() -> ASREngine:
     return get_registry().get_asr()
 
 
-def _get_asr_engine() -> ASREngine:
-    factory = _asr_engine_factory or _default_engine_factory
-    return factory()
+def _get_asr_engine(provider_id: str | None = None) -> ASREngine:
+    """
+    Return the ASR engine for this encounter.
+
+    If a LoRA adapter exists for the provider, automatically uses
+    WhisperXLoRAServer via registry.get_asr_for_provider().
+    Falls back to base WhisperX if no adapter is available.
+    """
+    if _asr_engine_factory:
+        return _asr_engine_factory()
+
+    if provider_id:
+        try:
+            from mcp_servers.registry import get_registry
+            return get_registry().get_asr_for_provider(provider_id)
+        except Exception:
+            pass
+
+    return _default_engine_factory()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,16 +229,27 @@ def transcribe_node(state: EncounterState) -> dict:
     # ── Build ASR config ──────────────────────────────────────────────────
     mode = state.recording_mode
     diarize = (mode == RecordingMode.AMBIENT)
+    # Build initial_prompt for hotword boosting (provider vocab + specialty terms)
+    provider_id = getattr(state.provider_profile, "id", None)
+    initial_prompt: str | None = None
+    try:
+        engine_tmp = _get_asr_engine(provider_id)
+        if hasattr(engine_tmp, "_build_initial_prompt"):
+            initial_prompt = engine_tmp._build_initial_prompt(state.provider_profile)
+    except Exception:
+        pass  # non-critical; proceed without prompt
+
     asr_cfg = ASRConfig(
         language="en",
         diarize=diarize,
         max_speakers=5 if diarize else 1,
         custom_vocabulary=state.provider_profile.custom_vocabulary,
+        initial_prompt=initial_prompt,
     )
 
     # ── Transcribe ────────────────────────────────────────────────────────
     try:
-        engine = _get_asr_engine()
+        engine = _get_asr_engine(provider_id)
         logger.info("transcribe_node: calling %s on %s", engine.name, audio_path,
                     extra={"encounter_id": state.encounter_id})
 

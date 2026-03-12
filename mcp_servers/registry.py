@@ -44,6 +44,7 @@ EngineBase = Union[ASREngine, LLMEngine, EHRAdapter]
 _SERVER_MAP: dict[tuple[str, str], tuple[str, str]] = {
     # ASR engines
     ("asr", "whisperx"):        ("mcp_servers.asr.whisperx_server",      "WhisperXServer"),
+    ("asr", "whisperx_lora"):   ("mcp_servers.asr.whisperx_lora_server", "WhisperXLoRAServer"),
     # ("asr", "nemo"):          ("mcp_servers.asr.nemo_streaming_server", "NemoStreamingServer"),
     # ("asr", "deepgram"):      ("mcp_servers.asr.deepgram_server",      "DeepgramServer"),
 
@@ -153,6 +154,52 @@ class EngineRegistry:
     def get_ehr(self, server_name: Optional[str] = None) -> EHRAdapter:
         """Typed convenience: get an EHR adapter."""
         return self.get("ehr", server_name)  # type: ignore[return-value]
+
+    def get_asr_for_provider(self, provider_id: str) -> ASREngine:
+        """
+        Return the best available ASR engine for a given provider.
+
+        If a trained LoRA adapter exists at models/whisper_lora/{provider_id}/,
+        returns a WhisperXLoRAServer for that provider.
+        Otherwise falls back to the default WhisperX server.
+
+        This is the preferred way to get an ASR engine in the pipeline —
+        it transparently upgrades to provider-specific fine-tuning whenever
+        an adapter is available, with no code changes in the callers.
+        """
+        from mcp_servers.asr.whisperx_lora_server import (
+            WhisperXLoRAServer,
+            adapter_exists,
+        )
+
+        cache_key = ("asr", f"whisperx_lora/{provider_id}")
+        if cache_key in self._cache:
+            return self._cache[cache_key]  # type: ignore[return-value]
+
+        if adapter_exists(provider_id):
+            log.info(
+                "registry: LoRA adapter found for provider '%s' — using WhisperXLoRAServer",
+                provider_id,
+            )
+            # Build from base ASR config + provider override
+            asr_cfg = get_asr_config()
+            base_cfg = asr_cfg.get("servers", {}).get("whisperx", {})
+            engine = WhisperXLoRAServer.for_provider(
+                provider_id=provider_id,
+                device=base_cfg.get("device", "cuda"),
+                compute_type=base_cfg.get("compute_type", "float16"),
+                diarization=base_cfg.get("diarization", True),
+                hf_token=base_cfg.get("hf_token"),
+            )
+            self._cache[cache_key] = engine
+            return engine
+
+        # No adapter — fall back to default WhisperX
+        log.debug(
+            "registry: no LoRA adapter for provider '%s' — using base WhisperX",
+            provider_id,
+        )
+        return self.get_asr()
 
     # ── Health checks ────────────────────────────────────────────────────
 
