@@ -16,7 +16,15 @@
 
 ---
 
-## 2. Technology Stack (All Self-Hosted)
+## 2. System Architecture Overview
+
+![AI Scribe Enterprise — System Architecture](images/architecture_diagram.png)
+
+*The diagram above shows the four main layers: (1) the LangGraph pipeline (CONTEXT → CAPTURE → TRANSCRIBE → NOTE → REVIEW → DELIVERY) with the shared EncounterState flowing through all nodes; (2) the MCP Engine Registry connecting to pluggable ASR, LLM, and EHR servers; (3) supporting components including the post-processor, provider profile system, template engine, and quality evaluation framework; and (4) the FastAPI backend and Next.js web application.*
+
+---
+
+## 3. Technology Stack (All Self-Hosted)
 
 ### 2.1 Complete Component Inventory
 
@@ -87,7 +95,7 @@ TIER 3 — Quality Maximum ($1,250/mo)
 
 ---
 
-## 3. Encounter Pipeline (LangGraph State Graph)
+## 4. Encounter Pipeline (LangGraph State Graph)
 
 ### 3.1 Top-Level Graph
 
@@ -241,7 +249,7 @@ POST:  confirm_delivery → write_audit_log → apply_retention_policy
 
 ---
 
-## 4. MCP Tool Servers (Plug-and-Play Layer)
+## 5. MCP Tool Servers (Plug-and-Play Layer)
 
 Every external capability is wrapped in an MCP server with a standard interface. The LangGraph nodes call tools via MCP — they never call engines directly.
 
@@ -354,7 +362,7 @@ tools:
 
 ---
 
-## 5. Engine Registry and Routing
+## 6. Engine Registry and Routing
 
 ### 5.1 Engine Registry
 
@@ -427,7 +435,7 @@ def select_llm_engine(profile, task, registry):
 
 ---
 
-## 6. Plug-and-Play Configuration
+## 7. Plug-and-Play Configuration
 
 ### 6.1 Inference Endpoints (Ollama Default)
 
@@ -556,7 +564,7 @@ provider:
 
 ---
 
-## 7. Feature → Component Traceability
+## 8. Feature → Component Traceability
 
 ```
 FEATURE (from requirements)              PIPELINE COMPONENTS                 PHASE
@@ -613,7 +621,7 @@ P3 Silent Mid-Visit Addendum             Capture.input_merger                3
 
 ---
 
-## 8. Data Model
+## 9. Data Model
 
 ### 8.1 Core Entities
 
@@ -663,7 +671,7 @@ File system    — Model weights (Ollama manages), templates, dictionaries
 
 ---
 
-## 9. Learning Service (Continuous Improvement)
+## 10. Learning Service (Continuous Improvement)
 
 ### 9.1 Correction Flow
 
@@ -697,7 +705,7 @@ A/B Tests:            Per-provider, per-encounter assignment → statistical gra
 
 ---
 
-## 10. Implementation Phases
+## 11. Implementation Phases
 
 ```
 PHASE 1 — MVP (Weeks 1-8)
@@ -747,7 +755,7 @@ PHASE 4 — Scale (Weeks 25+)
 
 ---
 
-## 11. Claude Code Project Structure
+## 12. Claude Code Project Structure
 
 ```
 ai-scribe/
@@ -937,7 +945,7 @@ ai-scribe/
 
 ---
 
-## 12. Provider-Specific ASR Optimization
+## 13. Provider-Specific ASR Optimization
 
 ### 12.1 LoRA Fine-Tuning — Decision Record
 
@@ -1029,7 +1037,7 @@ Beyond LoRA, the following knobs are available per provider via `asr_overrides` 
 
 ---
 
-## 13. Getting Started (Claude Code Sequence)
+## 14. Getting Started (Claude Code Sequence)
 
 ```
 SESSION 1:  Project scaffolding + state schema + LangGraph skeleton
