@@ -50,6 +50,8 @@ def main() -> None:
     parser.add_argument("--version", default="v2", help="Pipeline version to evaluate")
     parser.add_argument("--no-fact-check", action="store_true", help="Skip fact extraction (faster)")
     parser.add_argument("--output-dir", default="output")
+    parser.add_argument("--judge-model", default=None,
+                        help="Ollama model to use as LLM judge (default: auto-discover first available)")
     args = parser.parse_args()
 
     samples = _collect_samples(args.version)
@@ -59,13 +61,16 @@ def main() -> None:
 
     print(f"Evaluating {len(samples)} samples (version={args.version})")
 
-    import httpx
-    try:
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
-        models = resp.json().get("models", [])
-        model = models[0]["name"] if models else "qwen2.5:32b"
-    except Exception:
-        model = "qwen2.5:32b"
+    if args.judge_model:
+        model = args.judge_model
+    else:
+        import httpx
+        try:
+            resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
+            models = resp.json().get("models", [])
+            model = models[0]["name"] if models else "qwen2.5:32b"
+        except Exception:
+            model = "qwen2.5:32b"
 
     from mcp_servers.llm.ollama_server import OllamaServer
     engine = OllamaServer(model_overrides={"command_parse": model, "note_generation": model})

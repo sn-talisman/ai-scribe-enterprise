@@ -7,9 +7,9 @@ export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
   const [agg, trendData, dims, samples] = await Promise.all([
-    fetchAggregate("v5").catch(() => null),
+    fetchAggregate("v6").catch(() => null),
     fetchTrend().catch(() => ({ trend: [] })),
-    fetchDimensions("v5").catch(() => []),
+    fetchDimensions("v6").catch(() => []),
     fetchSamples().catch(() => []),
   ]);
 
@@ -29,13 +29,13 @@ export default async function Dashboard() {
     {
       label: "Best Sample Score",
       value: agg ? `${agg.max.toFixed(2)} / 5.0` : "—",
-      sub: "v5 pipeline",
+      sub: "v6 pipeline",
       color: "#F59E0B",
     },
     {
       label: "Latest Version",
-      value: "v5",
-      sub: "Session 10 — ASR inference knobs",
+      value: "v6",
+      sub: "Session 11 — qwen2.5:14b",
       color: "#10B981",
     },
   ];

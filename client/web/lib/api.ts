@@ -85,17 +85,23 @@ export const fetchSamples = (mode?: string) =>
 export const fetchSample = (id: string) =>
   get<SampleDetail>(`/encounters/${id}`);
 
-export const fetchNote = (id: string, version = "v5") =>
+export const fetchNote = (id: string, version = "v6") =>
   get<{ content: string }>(`/encounters/${id}/note`, { version });
 
-export const fetchComparison = (id: string, version = "v5") =>
+export const fetchComparison = (id: string, version = "v6") =>
   get<{ content: string }>(`/encounters/${id}/comparison`, { version });
 
 export const fetchGoldNote = (id: string) =>
   get<{ content: string }>(`/encounters/${id}/gold`);
 
-export const fetchSampleQuality = (id: string, version = "v5") =>
+export const fetchSampleQuality = (id: string, version = "v6") =>
   get<QualityScore & { sample_id: string }>(`/encounters/${id}/quality`, { version });
+
+export const fetchTranscript = (id: string, version = "v6") =>
+  get<{ content: string; versions: string[] }>(`/encounters/${id}/transcript`, { version });
+
+export const fetchAudioUrl = (id: string): string =>
+  `${BASE}/encounters/${id}/audio`;
 
 // Quality
 export const fetchAggregate = (version = "v5") =>

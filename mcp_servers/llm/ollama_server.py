@@ -38,6 +38,7 @@ def _build_request_body(
     messages: list[LLMMessage],
     config: LLMConfig,
     stream: bool = False,
+    keep_alive: str | int | None = None,
 ) -> dict[str, Any]:
     all_messages = [{"role": "system", "content": system_prompt}]
     all_messages += [{"role": m.role, "content": m.content} for m in messages]
@@ -56,6 +57,10 @@ def _build_request_body(
         body["seed"] = config.seed
     if config.response_format:
         body["response_format"] = config.response_format
+    # keep_alive=0 tells Ollama to unload the model from VRAM immediately after
+    # the response. Useful when sharing a GPU with WhisperX (large-v3 ~10 GB).
+    if keep_alive is not None:
+        body["keep_alive"] = keep_alive
     return body
 
 
@@ -78,10 +83,14 @@ class OllamaServer(LLMEngine):
         model_overrides: Optional[dict[str, str]] = None,
         connect_timeout: float = _CONNECT_TIMEOUT,
         read_timeout: float = _READ_TIMEOUT,
+        keep_alive: str | int | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.model_overrides = model_overrides or {}
+        # keep_alive=0 unloads the model from VRAM after each response.
+        # Useful when sharing GPU with WhisperX. None = Ollama default (5 min).
+        self.keep_alive = keep_alive
         self._timeout = httpx.Timeout(connect=connect_timeout, read=read_timeout, write=30.0, pool=5.0)
         self._headers = {"Content-Type": "application/json"}
         if api_key:
@@ -129,7 +138,7 @@ class OllamaServer(LLMEngine):
         effective_model = self.model_overrides.get(task, config.model)
         effective_config = LLMConfig(**{**config.__dict__, "model": effective_model})
 
-        body = _build_request_body(system_prompt, messages, effective_config, stream=False)
+        body = _build_request_body(system_prompt, messages, effective_config, stream=False, keep_alive=self.keep_alive)
         endpoint = f"{self.url}/chat/completions"
 
         logger.debug("ollama: POST %s model=%s tokens_max=%d", endpoint, effective_model, config.max_tokens)
@@ -166,7 +175,7 @@ class OllamaServer(LLMEngine):
         effective_model = self.model_overrides.get(task, config.model)
         effective_config = LLMConfig(**{**config.__dict__, "model": effective_model})
 
-        body = _build_request_body(system_prompt, messages, effective_config, stream=False)
+        body = _build_request_body(system_prompt, messages, effective_config, stream=False, keep_alive=self.keep_alive)
         endpoint = f"{self.url}/chat/completions"
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -197,7 +206,7 @@ class OllamaServer(LLMEngine):
         effective_model = self.model_overrides.get(task, config.model)
         effective_config = LLMConfig(**{**config.__dict__, "model": effective_model})
 
-        body = _build_request_body(system_prompt, messages, effective_config, stream=True)
+        body = _build_request_body(system_prompt, messages, effective_config, stream=True, keep_alive=self.keep_alive)
         endpoint = f"{self.url}/chat/completions"
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:

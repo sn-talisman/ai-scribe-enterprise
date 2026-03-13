@@ -97,6 +97,37 @@ def get_gold_note(sample_id: str):
     return GoldNoteContent(sample_id=sample_id, content=content)
 
 
+@router.get("/{sample_id}/transcript")
+def get_transcript(
+    sample_id: str,
+    version: str = Query(dl.LATEST_VERSION),
+):
+    """Get the standalone transcript text for a sample."""
+    content = dl.get_transcript(sample_id, version)
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Transcript not found for sample '{sample_id}' version '{version}'",
+        )
+    transcript_versions = dl.list_transcript_versions(sample_id)
+    return {
+        "sample_id": sample_id,
+        "version": version,
+        "content": content,
+        "versions": transcript_versions,
+    }
+
+
+@router.get("/{sample_id}/audio")
+def get_audio(sample_id: str):
+    """Stream the raw audio file for a sample."""
+    from fastapi.responses import FileResponse
+    audio_path = dl.get_audio_path(sample_id)
+    if audio_path is None:
+        raise HTTPException(status_code=404, detail=f"Audio not found for '{sample_id}'")
+    return FileResponse(audio_path, media_type="audio/mpeg", filename=f"{sample_id}.mp3")
+
+
 @router.get("/{sample_id}/quality")
 def get_sample_quality(
     sample_id: str,

@@ -19,8 +19,8 @@ OUTPUT_DIR = ROOT / "output"
 DATA_DIR = ROOT / "data"
 PROVIDERS_DIR = ROOT / "config" / "providers"
 
-VERSIONS = ["v5", "v4", "v3", "v2", "v1"]
-LATEST_VERSION = "v5"
+VERSIONS = ["v6", "v5", "v4", "v3", "v2", "v1"]
+LATEST_VERSION = "v6"
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +89,37 @@ def get_generated_note(sample_id: str, version: str = LATEST_VERSION) -> Optiona
         path = OUTPUT_DIR / subdir / sample_id / f"generated_note_{version}.md"
         if path.exists():
             return path.read_text()
+    return None
+
+
+def get_transcript(sample_id: str, version: str = LATEST_VERSION) -> Optional[str]:
+    """Return the standalone transcript text for a sample + version."""
+    for subdir in ("dictation", "conversations"):
+        path = OUTPUT_DIR / subdir / sample_id / f"audio_transcript_{version}.txt"
+        if path.exists():
+            return path.read_text()
+    return None
+
+
+def list_transcript_versions(sample_id: str) -> list[str]:
+    """Return all versions that have a standalone transcript file."""
+    for subdir in ("dictation", "conversations"):
+        sample_dir = OUTPUT_DIR / subdir / sample_id
+        if sample_dir.exists():
+            versions = []
+            for v in VERSIONS:
+                if (sample_dir / f"audio_transcript_{v}.txt").exists():
+                    versions.append(v)
+            return versions
+    return []
+
+
+def get_audio_path(sample_id: str) -> Optional[str]:
+    """Return absolute path to the audio file for a sample (for streaming)."""
+    for subdir, audio_name in (("dictation", "dictation.mp3"), ("conversations", "conversation.mp3")):
+        path = DATA_DIR / subdir / sample_id / audio_name
+        if path.exists():
+            return str(path)
     return None
 
 

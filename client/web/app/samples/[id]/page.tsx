@@ -4,6 +4,7 @@ import {
   fetchComparison,
   fetchGoldNote,
   fetchSampleQuality,
+  fetchTranscript,
 } from "@/lib/api";
 import SampleDetailTabs from "@/components/SampleDetailTabs";
 
@@ -16,14 +17,15 @@ interface Props {
 
 export default async function SampleDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { version = "v5" } = await searchParams;
+  const { version = "v6" } = await searchParams;
 
-  const [detail, note, comparison, gold, quality] = await Promise.allSettled([
+  const [detail, note, comparison, gold, quality, transcript] = await Promise.allSettled([
     fetchSample(id),
     fetchNote(id, version),
     fetchComparison(id, version),
     fetchGoldNote(id),
     fetchSampleQuality(id, version),
+    fetchTranscript(id, version),
   ]);
 
   const sampleDetail = detail.status === "fulfilled" ? detail.value : null;
@@ -31,6 +33,8 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
   const compContent = comparison.status === "fulfilled" ? comparison.value.content : null;
   const goldContent = gold.status === "fulfilled" ? gold.value.content : null;
   const qualityData = quality.status === "fulfilled" ? quality.value : null;
+  const transcriptContent = transcript.status === "fulfilled" ? transcript.value.content : null;
+  const txVersions = transcript.status === "fulfilled" ? transcript.value.versions : [];
 
   return (
     <div className="p-8 space-y-6">
@@ -71,7 +75,7 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
         {/* Version selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-400">Version:</span>
-          {(sampleDetail?.versions ?? ["v5"]).map((v) => (
+          {(sampleDetail?.versions ?? ["v6"]).map((v) => (
             <a
               key={v}
               href={`/samples/${id}?version=${v}`}
@@ -127,10 +131,13 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
       <SampleDetailTabs
         sampleId={id}
         version={version}
+        availableVersions={sampleDetail?.versions ?? ["v6"]}
         note={noteContent}
         comparison={compContent}
         gold={goldContent}
         quality={qualityData}
+        transcript={transcriptContent}
+        transcriptVersions={txVersions}
       />
     </div>
   );

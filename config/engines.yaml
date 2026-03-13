@@ -15,10 +15,10 @@ llm:
       type: ollama
       url: "http://localhost:11434/v1"
       models:
-        note_generation:  "qwen2.5:32b"
-        coding:           "qwen2.5:32b"
+        note_generation:  "qwen2.5:14b"   # v7 benchmark: 4.51/5.0 (vs 32b: 4.35, llama3.1: 4.33)
+        coding:           "qwen2.5:14b"
         patient_summary:  "qwen2.5:14b"
-        command_parse:    "qwen2.5:7b"
+        command_parse:    "qwen2.5:14b"
 
     vllm:                               # High-throughput production alternative
       type: vllm
