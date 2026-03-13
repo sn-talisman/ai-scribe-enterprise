@@ -30,7 +30,7 @@ Engine selection is governed by **provider profiles** and an **engine registry**
 | Noise suppression | DeepFilterNet | RNNoise, passthrough |
 | VAD | Silero VAD | WebRTC VAD |
 | LLM inference | Ollama (OpenAI-compatible API) | vLLM, SGLang |
-| LLM model | Qwen 2.5-32B (Apache 2.0) | Llama 3.1-70B, Mistral |
+| LLM model | Qwen 2.5-14b (Apache 2.0) | Qwen 2.5-32B, Llama 3.1-70B, Mistral |
 | Post-processing | 12-stage rule-based pipeline + 98K medical dict | ByT5 ML model (future) |
 | Orchestration | LangGraph | — |
 | Database | PostgreSQL | — |
@@ -69,8 +69,8 @@ llm:
     ollama:
       url: "http://localhost:11434/v1"
       models:
-        note_generation: "qwen2.5:32b"
-        coding: "qwen2.5:32b"
+        note_generation: "qwen2.5:14b"
+        coding: "qwen2.5:14b"
         patient_summary: "qwen2.5:14b"
         command_parse: "qwen2.5:7b"
 
@@ -122,11 +122,16 @@ Markdown (.md) files with proper headers, sections, and tables. This makes them 
 diffable, and directly comparable with the gold standard documents.
 
 **Version tracking:** Generated outputs are versioned across sessions:
-- `v1` = Session 4 (basic end-to-end, no templates)
-- `v2` = Session 5 (templates + specialty dictionaries)
-- `v3` = Session 7 (full patient context + demographics — should match gold completeness)
+- `v1` = Session 4 (basic end-to-end, no templates) — ~3.5/5.0
+- `v2` = Session 5 (templates + specialty dictionaries) — 4.30/5.0
+- `v3` = Session 7 (full patient context + demographics) — 4.34/5.0
+- `v4` = Session 8 (provider profiles + vocab + style directives) — 4.38/5.0
+- `v5` = Session 10 (ASR inference knobs wired) — 4.35/5.0
+- `v6` = Post-session model upgrade (qwen2.5:14b) — **4.44/5.0** ← current
 
-Each version should show measurable improvement over the previous.
+Each version shows measurable improvement. Quality judged by llama3.1:latest as consistent cross-model evaluator.
+
+**Standalone transcripts:** Each version also saves `audio_transcript_v{N}.txt` alongside the note in `output/{mode}/{sample_id}/`. This separates transcripts from SOAP notes cleanly.
 
 ## Existing Code to Integrate
 
@@ -295,7 +300,10 @@ ai-scribe/
 │   ├── build_specialty_dicts.py    # Generate specialty dictionaries (Session 5)
 │   ├── extract_patient_context.py  # Extract demographics from gold notes (Session 7)
 │   ├── run_quality_sweep.py        # Run pipeline + evaluate all samples (Session 6)
-│   └── compare_versions.py         # Side-by-side output comparison (Session 6)
+│   ├── compare_versions.py         # Side-by-side output comparison (Session 6)
+│   ├── batch_eval.py               # Batch pipeline runner (use --two-pass for VRAM safety)
+│   ├── backfill_transcripts.py     # Backfill audio_transcript_v{N}.txt from cache
+│   └── generate_architecture_diagram.py  # Graphviz architecture diagram generator
 │
 ├── tests/
 │   ├── unit/
@@ -308,7 +316,11 @@ ai-scribe/
 │   └── docker-compose.yml
 │
 └── docs/
-    └── architecture.md             # Full system architecture
+    ├── architecture.md             # Full system architecture (14 sections)
+    ├── implementation.md           # Implementation notes
+    └── images/
+        ├── architecture_diagram.png  # Programmatic architecture diagram
+        └── architecture_diagram.dot  # Graphviz source
 ```
 
 ## Build Sequence
@@ -872,6 +884,37 @@ Deferred from Session 10. Wire ambient-specific inference knobs that were left i
 - Evaluate WER improvement on ambient samples after these changes
 - (LoRA for ambient: also deferred until ≥30 min verbatim ambient transcripts are accumulated via correction-capture loop)
 
+### Session 10c: LLM Model Upgrade + Multi-Version UI ✓ COMPLETE
+This session benchmarked alternative LLM models and upgraded the default, then added full
+version-comparison capabilities to the web UI.
+
+**Model Benchmarking:**
+- Tested: openbiollm:8b, MedGemma, mistral:latest, qwen2.5:14b, qwen2.5:32b
+- openbiollm and MedGemma ruled out: medical Q&A chatbots, ignore system prompt formatting
+- Mistral below baseline (25% keyword overlap vs 33% for llama3.1)
+- qwen2.5:14b = qwen2.5:32b in quality but 5× faster; selected as default
+- Fair comparison methodology: always use llama3.1:latest as judge (--judge-model flag)
+- Result: **v6 = 4.44/5.0** (+0.09 vs v5=4.35)
+
+**Two-Pass Batch Architecture (VRAM management):**
+- A10G (23 GB): WhisperX peaks 10-12 GB + qwen2.5:14b ~8 GB = cannot coexist
+- Solution: `--two-pass` flag in `scripts/batch_eval.py`
+  - Pass 1: ASR only — `_NoOpLLM` stub (zero VRAM for LLM), saves `transcript_cache_v{N}.json`
+  - Pass 2: LLM only from cache — WhisperX fully freed before LLM loads
+- `keep_alive=0` in OllamaServer forces model unload from VRAM after each response
+
+**Standalone Transcript Files:**
+- All generated notes now also save `audio_transcript_v{N}.txt` per sample per version
+- `scripts/backfill_transcripts.py`: backfills v1-v5 from transcript cache for all 33 samples
+- API: new endpoints `GET /encounters/{id}/transcript` and `GET /encounters/{id}/audio`
+
+**Multi-Version Web UI:**
+- Sample Detail page now has 6 tabs: Transcript, Clinical Note, Comparison, Gold Standard, Quality Scores, Compare Versions
+- Transcript tab: HTML5 audio player (play/pause, scrubber, time) + version picker (v1–v6)
+- Clinical Note tab: version picker with client-side switching via fetchNote()
+- Compare Versions tab: dual version pickers + LCS-based line diff (green/red/gray)
+- Architecture diagram: `scripts/generate_architecture_diagram.py` → `docs/images/architecture_diagram.png`
+
 ### Session 11: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
 - Classify corrections (ASR_ERROR, STYLE, CONTENT, CODING, TEMPLATE)
@@ -934,4 +977,7 @@ Deferred from Session 10. Wire ambient-specific inference knobs that were left i
 - Ollama must be installed and running locally before testing LLM nodes
 - For GPU nodes (WhisperX, NeMo), CUDA toolkit must be installed
 - Gold-standard notes in `data/` are the quality benchmark — every generated note is compared against them
-- Generated output versions are tracked: v1 (Session 4), v2 (Session 5), v3 (Session 7), v4 (Session 8) — each should show measurable improvement
+- Generated output versions are tracked: v1 (Session 4), v2 (Session 5), v3 (Session 7), v4 (Session 8), v5 (Session 10), v6 (model upgrade) — each should show measurable improvement
+- Current default LLM: qwen2.5:14b via Ollama. Always use --judge-model llama3.1:latest for quality sweeps
+- VRAM constraint on A10G (23 GB): use --two-pass flag for batch_eval.py to prevent OOM
+- Virtual env: always `source .venv/bin/activate` before running scripts
