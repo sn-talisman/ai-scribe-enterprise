@@ -1,0 +1,103 @@
+digraph ai_scribe {
+	bgcolor=white compound=true dpi=150 fontname=Helvetica fontsize=12 nodesep=0.45 pad=0.5 rankdir=TB ranksep=0.9 size="20,13!"
+	subgraph cluster_pipe {
+		color="#1E1B4B" fillcolor="#EEF2FF" fontname="Helvetica-Bold" fontsize=12 label="§1  LANGGRAPH PIPELINE  (orchestrator/)" labeljust=l labelloc=t penwidth=2 style=filled
+		{
+			rank=same
+			ctx [label=<<b>CONTEXT</b><br/><font point-size="8">StubEHRServer → patient_context.yaml</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+			cap [label=<<b>CAPTURE</b><br/><font point-size="8">Audio segments · future: VAD + noise suppression</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+			tx [label=<<b>TRANSCRIBE</b><br/><font point-size="8">WhisperXServer  ·  faster-whisper large-v3</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+			asr_r [label=<<font point-size="8">asr_router</font>> fillcolor="#312E81" fontcolor=white height=0.55 shape=diamond style=filled width=0.9]
+			note [label=<<b>NOTE</b><br/><font point-size="8">OllamaServer  ·  qwen2.5:14b</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+			llm_r [label=<<font point-size="8">llm_router</font>> fillcolor="#312E81" fontcolor=white height=0.55 shape=diamond style=filled width=0.9]
+			rev [label=<<b>REVIEW</b><br/><font point-size="8">HITL Review  ·  auto-approve stub</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+			del [label=<<b>DELIVERY</b><br/><font point-size="8">EHR push  ·  clipboard stub</font>> fillcolor="#1E1B4B" fontcolor=white fontname="Helvetica-Bold" fontsize=10 height=0.55 margin="0.12,0.08" shape=box style="filled,rounded" width=1.9]
+		}
+		ctx -> cap [label=context_packet fontsize=8]
+		cap -> tx [label=audio_segments fontsize=8]
+		tx -> asr_r
+		asr_r -> note [label="conf≥0.40" fontsize=8]
+		note -> llm_r
+		llm_r -> rev [label="conf≥0.50" fontsize=8]
+		rev -> del [label=approved fontsize=8]
+		estate [label=<<b>EncounterState (Pydantic v2)</b>  ·  shared across all nodes<br/><font point-size="8">encounter_id  ·  provider_id  ·  recording_mode (AMBIENT | DICTATION)  ·  context_packet  ·  audio_segments  ·  transcript  ·  generated_note  ·  final_note  ·  delivery_result  ·  errors[]  ·  EncounterMetrics</font>> fillcolor="#EEF2FF" fontcolor="#1E1B4B" fontname=Helvetica fontsize=9 height=0.6 shape=rectangle style=filled width=16]
+		{
+			rank=same
+		}
+		ctx -> estate [style=invis]
+	}
+	subgraph cluster_mcp {
+		color="#00B27A" fillcolor="#F0FDF4" fontname="Helvetica-Bold" fontsize=12 label="§2  MCP ENGINE REGISTRY & SERVERS  (mcp_servers/)" labeljust=l labelloc=t penwidth=2 style=filled
+		reg [label=<<b>EngineRegistry</b><br/><font point-size="8">mcp_servers/registry.py<br/>get_asr()  ·  get_llm()  ·  get_ehr()<br/>get_asr_for_provider(provider_id, use_lora=False)<br/>get_with_failover()  ·  health_check_all()<br/>Config: config/engines.yaml</font>> fillcolor="#00B27A" fontcolor=white fontname="Helvetica-Bold" fontsize=10 shape=box style="filled,rounded" width=2.8]
+		subgraph cluster_asr {
+			color="#00B27A" fillcolor="#DCFCE7" fontname="Helvetica-Bold" fontsize=10 label=ASR style=filled
+			asr_wx [label=<<b>[DEFAULT] WhisperXServer</b><br/><font point-size="8">faster-whisper (CTranslate2)</font><br/><font point-size="8">pyannote 3.1 · wav2vec2 alignment</font><br/><font point-size="8">whisper-large-v3 · CUDA A10G</font><br/><font point-size="8">VRAM peak 10-12 GB</font>> color="#00B27A" fillcolor="#00B27A" fontcolor=white fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.4]
+			asr_lora [label=<<b>[OPT-IN] WhisperXLoraServer</b><br/><font point-size="8">peft LoRA adapter · ≥30 min audio</font><br/><font point-size="8">Ambient: -11-13% WER</font>> color="#64748B" fillcolor="#E2E8F0" fontcolor="#64748B" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded,dashed" width=2.4]
+		}
+		subgraph cluster_llm {
+			color="#00B27A" fillcolor="#DCFCE7" fontname="Helvetica-Bold" fontsize=10 label=LLM style=filled
+			llm_ol [label=<<b>[DEFAULT] OllamaServer</b><br/><font point-size="8">OpenAI-compat · localhost:11434/v1</font><br/><font point-size="8">qwen2.5:14b (Apache 2.0)  ~8 GB VRAM</font><br/><font point-size="8">keep_alive=0 · per-task model overrides</font>> color="#00B27A" fillcolor="#00B27A" fontcolor=white fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.4]
+			llm_fut [label=<<b>[FUTURE] vLLM / Claude API / OpenAI</b>> color="#64748B" fillcolor="#E2E8F0" fontcolor="#64748B" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded,dashed" width=2.4]
+		}
+		subgraph cluster_ehr {
+			color="#D97706" fillcolor="#FEF9C3" fontname="Helvetica-Bold" fontsize=10 label=EHR style=filled
+			ehr_stub [label=<<b>[DEFAULT] StubEHRServer</b><br/><font point-size="8">Reads patient_context.yaml<br/>get_patient() · get_problem_list()<br/>get_medications() · get_allergies()<br/>get_recent_labs() · push_note()</font>> fillcolor="#D97706" fontcolor=white fontname=Helvetica fontsize=9 shape=box style="filled,rounded" width=2.4]
+			ehr_fut [label=<<b>[FUTURE] FHIRServer / HL7v2 / Extension</b>> color="#64748B" fillcolor="#E2E8F0" fontcolor="#64748B" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded,dashed" width=2.4]
+		}
+		subgraph cluster_data {
+			color="#00B27A" fillcolor="#DCFCE7" fontname="Helvetica-Bold" fontsize=10 label="Data Servers" style=filled
+			tpl_srv [label=<<b>TemplateServer</b><br/><font point-size="8">NoteTemplate YAML loading</font><br/><font point-size="8">list_templates() · get_template()</font>> color="#00B27A" fillcolor="#00B27A" fontcolor=white fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.4]
+			dict_srv [label=<<b>MedicalDictServer</b><br/><font point-size="8">get_hotwords(specialty, N)</font><br/><font point-size="8">98K OpenMedSpel base</font>> color="#00B27A" fillcolor="#00B27A" fontcolor=white fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.4]
+		}
+		{
+			rank=same
+		}
+		reg -> asr_wx [label=ASR fontsize=8 lhead=cluster_asr]
+		reg -> asr_lora [color="#64748B" fontsize=8 style=dashed]
+		reg -> llm_ol [label=LLM fontsize=8 lhead=cluster_llm]
+		reg -> llm_fut [color="#64748B" fontsize=8 style=dashed]
+		reg -> ehr_stub [label=EHR fontsize=8 lhead=cluster_ehr]
+		reg -> ehr_fut [color="#64748B" fontsize=8 style=dashed]
+		reg -> tpl_srv [fontsize=8]
+		reg -> dict_srv [fontsize=8]
+	}
+	subgraph cluster_support {
+		color="#D97706" fillcolor="#FFFBEB" fontname="Helvetica-Bold" fontsize=12 label="§3  SUPPORTING COMPONENTS" labeljust=l labelloc=t penwidth=2 style=filled
+		postproc [label=<<b>Post-Processor  (postprocessor/)</b><br/><font point-size="8">medasr_postprocessor.py · 12-stage rule-based</font><br/><font point-size="8">medical_wordlist.txt · 98K OpenMedSpel (GPL)</font><br/><font point-size="8">CTC stutters -90%  ·  char stutters -99%</font><br/><font point-size="8">Medical term correction -87%</font>> fillcolor="#FEF3C7" fontcolor="#1C1917" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.7]
+		prov_mgr [label=<<b>Provider Profile System  (config/providers/)</b><br/><font point-size="8">style_directives · custom_vocabulary · asr_overrides</font><br/><font point-size="8">template_routing · quality_scores · quality_history</font><br/><font point-size="8">ProviderManager.resolve_template(provider_id, visit_type)</font>> fillcolor="#FEF3C7" fontcolor="#1C1917" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.7]
+		tpl_sys [label=<<b>Template System  (config/templates/*.yaml)</b><br/><font point-size="8">ortho_follow_up · ortho_initial_eval · soap_default</font><br/><font point-size="8">sections: label, required, prompt_hint, formatting</font><br/><font point-size="8">Routing: provider_id + visit_type → template_id → YAML</font>> fillcolor="#FEF3C7" fontcolor="#1C1917" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.7]
+		qual_fw [label=<<b>Quality Evaluation  (quality/)</b><br/><font point-size="8">evaluator.py · LLM-as-judge (llama3.1)</font><br/><font point-size="8">fact_extractor.py · meds / diagnoses / findings</font><br/><font point-size="8">Dimensions: accuracy · completeness · no_hallucination</font><br/><font point-size="8">            structure · language  (each 1–5)</font>> fillcolor="#FEF3C7" fontcolor="#1C1917" fontname=Helvetica fontsize=9 margin="0.15,0.08" shape=box style="filled,rounded" width=2.7]
+		qual_trend [label=<<b>Quality Trend  (v1 → v6)</b><br/><font point-size="8">v1 basic        ~3.50<br/>v2 templates     4.30<br/>v3 EHR context   4.34<br/>v4 provider      4.38<br/>v5 ASR knobs     4.35<br/><b>v6 qwen2.5:14b  4.44 ✓</b></font>> fillcolor="#F8FAFC" fontcolor="#1C1917" fontname=Helvetica fontsize=9 shape=box style="filled,rounded" width=2.2]
+		prov_mgr -> tpl_sys [label=resolves fontsize=8]
+		qual_fw -> qual_trend [fontsize=8]
+	}
+	subgraph cluster_ui {
+		color="#0369A1" fillcolor="#E0F2FE" fontname="Helvetica-Bold" fontsize=12 label="§4  API + WEB UI" labeljust=l labelloc=t penwidth=2 style=filled
+		api [label=<<b>FastAPI Backend  (api/)</b><br/><font point-size="8">POST /encounters  ·  POST /{id}/upload  ·  GET /{id}<br/>GET /{id}/transcript · /{id}/note · /{id}/audio<br/>GET /{id}/comparison · /{id}/quality<br/>GET /providers  ·  /providers/{id}/quality-trend<br/>GET /quality/aggregate · /samples · /dimensions<br/>WS /ws/encounters/{id} — real-time pipeline progress<br/>Data source: output/ directory tree</font>> fillcolor="#0369A1" fontcolor=white fontname="Helvetica-Bold" fontsize=9 shape=box style="filled,rounded" width=3.8]
+		web [label=<<b>Next.js Web App  (client/web/)</b><br/><font point-size="8">Dashboard (/)  — KPI cards · quality trend chart (Recharts)<br/>Samples (/samples)  — filterable table<br/>Sample Detail (/samples/[id])  — 6 tabs:<br/>  Transcript — audio player + version picker (v1–v6)<br/>  Clinical Note — Markdown + version picker<br/>  Comparison — gold vs generated side-by-side<br/>  Quality Scores — dimension bar chart<br/>  Compare Versions — LCS line diff (green/red/gray)<br/>Providers (/providers)  ·  Upload (/upload)</font>> fillcolor="#0369A1" fontcolor=white fontname="Helvetica-Bold" fontsize=9 shape=box style="filled,rounded" width=3.8]
+		{
+			rank=same
+		}
+		web -> api [label="REST calls" fontsize=8]
+		api -> web [label="JSON + WS" fontsize=8 style=dashed]
+	}
+	subgraph cluster_legend {
+		color="#CBD5E1" fillcolor="#F8FAFC" fontname=Helvetica fontsize=10 label=Legend labeljust=r labelloc=b style=filled
+		l1 [label="[DEFAULT]  active implementation" fontsize=9 shape=plaintext]
+		l2 [label="[OPT-IN / FUTURE]  planned or stubbed (dashed border)" fontsize=9 shape=plaintext]
+		l3 [label="──►  data flow      - - ►  optional / future path" fontsize=9 shape=plaintext]
+		l1 -> l2 [style=invis]
+		l2 -> l3 [style=invis]
+	}
+	estate -> reg [style=invis]
+	reg -> api [style=invis]
+	postproc -> api [style=invis]
+	ctx -> ehr_stub [label="get_patient()" color="#D97706" constraint=false fontsize=8 style=dashed]
+	tx -> asr_wx [label="transcribe_batch_sync()" color="#00B27A" constraint=false fontsize=8 style=dashed]
+	tx -> postproc [label="_apply_postprocessor()" color="#D97706" constraint=false fontsize=8 style=dashed]
+	note -> llm_ol [label="generate_sync()" color="#00B27A" constraint=false fontsize=8 style=dashed]
+	note -> tpl_srv [label="load_template()" color="#00B27A" constraint=false fontsize=8 style=dashed]
+	note -> dict_srv [label="get_hotwords()" color="#00B27A" constraint=false fontsize=8 style=dashed]
+	del -> ehr_stub [label="push_note()" color="#D97706" constraint=false fontsize=8 style=dashed]
+	del -> api [label="writes output/" color="#0369A1" constraint=false fontsize=8 style=dashed]
+}
