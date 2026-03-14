@@ -1034,12 +1034,12 @@ This session adds the ability to trigger the transcription and note generation p
 - On-demand is for individual encounters triggered from the UI
 - Both paths use the same underlying pipeline code
 
-### Session 13: iPhone and Android Application
-This session builds a cross-platform mobile application for AI Scribe using React Native (or Expo), providing core functionality on both iOS and Android.
+### Session 13: iPhone, iPad and Android Application
+This session builds a cross-platform mobile application for AI Scribe using React Native (or Expo), providing core functionality on iPhone, iPad, and Android.
 
 **a. Application Design**
 - App name: "AI Scribe" with Talisman Solutions logo
-- Cross-platform: React Native / Expo for iOS and Android feature parity
+- Cross-platform: React Native / Expo for iPhone, iPad, and Android feature parity
 - Connects to the same FastAPI backend as the web app
 - Authentication: JWT token-based (same as web API)
 - Designed for future extensibility: modular navigation, theme system, offline-first architecture
