@@ -11,6 +11,7 @@ import {
   RefreshControl,
   useWindowDimensions,
   TextInput,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
@@ -111,7 +112,7 @@ export default function EncountersScreen() {
         </View>
       </View>
 
-      {/* Filter chips */}
+      {/* Mode filter chips */}
       <View style={styles.filterRow}>
         <TouchableOpacity
           style={[styles.chip, filterMode === null && styles.chipActive]}
@@ -131,25 +132,35 @@ export default function EncountersScreen() {
         >
           <Text style={[styles.chipText, filterMode === "ambient" && styles.chipTextActive]}>Ambient</Text>
         </TouchableOpacity>
-
-        {/* Provider filter */}
-        {providers.length > 0 && (
-          <>
-            <View style={styles.divider} />
-            {providers.slice(0, isTablet ? 6 : 3).map((p) => (
-              <TouchableOpacity
-                key={p.id}
-                style={[styles.chip, filterProvider === p.id && styles.chipActive]}
-                onPress={() => setFilterProvider(filterProvider === p.id ? null : p.id)}
-              >
-                <Text style={[styles.chipText, filterProvider === p.id && styles.chipTextActive]} numberOfLines={1}>
-                  {p.name?.split(" ").pop() ?? p.id}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </>
-        )}
       </View>
+
+      {/* Provider filter — horizontally scrollable */}
+      {providers.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.providerFilterRow}
+        >
+          <TouchableOpacity
+            style={[styles.providerChip, filterProvider === null && styles.chipActive]}
+            onPress={() => setFilterProvider(null)}
+          >
+            <Ionicons name="people" size={12} color={filterProvider === null ? colors.textInverse : colors.textSecondary} />
+            <Text style={[styles.chipText, filterProvider === null && styles.chipTextActive]}>All Providers</Text>
+          </TouchableOpacity>
+          {providers.map((p) => (
+            <TouchableOpacity
+              key={p.id}
+              style={[styles.providerChip, filterProvider === p.id && styles.chipActive]}
+              onPress={() => setFilterProvider(filterProvider === p.id ? null : p.id)}
+            >
+              <Text style={[styles.chipText, filterProvider === p.id && styles.chipTextActive]} numberOfLines={1}>
+                {p.name ?? p.id}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       <FlatList
         data={filtered}
@@ -202,7 +213,23 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   chipText: { fontSize: fontSize.xs, color: colors.textSecondary, fontWeight: "500" },
   chipTextActive: { color: colors.textInverse },
-  divider: { width: 1, height: 20, backgroundColor: colors.border, alignSelf: "center" },
+  providerFilterRow: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    gap: spacing.sm,
+    flexDirection: "row",
+  },
+  providerChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
   listContent: { padding: spacing.lg, gap: spacing.md },
   tabletListContent: { maxWidth: 900, alignSelf: "center", width: "100%" },
   card: {

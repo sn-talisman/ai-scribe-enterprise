@@ -462,7 +462,15 @@ export default function RecordScreen() {
             <View style={[styles.row, { marginTop: spacing.lg }]}>
               <TouchableOpacity
                 style={styles.viewNoteBtn}
-                onPress={() => nav.navigate("Encounters", { screen: "EncounterDetail", params: { sampleId: resultSampleId } })}
+                onPress={() => {
+                  // Switch to Encounters tab with both EncountersList and EncounterDetail
+                  // in the stack so the native back button works correctly.
+                  nav.navigate("Encounters", {
+                    screen: "EncounterDetail",
+                    params: { sampleId: resultSampleId },
+                    initial: false,
+                  });
+                }}
               >
                 <Text style={{ color: colors.textInverse, fontWeight: "600", fontSize: fontSize.sm }}>View Note</Text>
               </TouchableOpacity>

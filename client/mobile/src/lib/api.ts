@@ -97,11 +97,14 @@ export interface UploadResponse {
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const base = getApiUrl();
-  const url = new URL(`${base}${path}`);
+  let fullUrl = `${base}${path}`;
   if (params) {
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const qs = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join("&");
+    fullUrl += `?${qs}`;
   }
-  const res = await fetch(url.toString());
+  const res = await fetch(fullUrl);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${path} — ${body}`);
