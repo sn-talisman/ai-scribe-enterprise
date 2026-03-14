@@ -65,7 +65,17 @@ logs/
 
 # Generated outputs (contain PHI from test data)
 output/dictation/
+output/conversation/
 output/conversations/
+output/batch_report_*.md
+output/quality_report_*.md
+output/transcript_cache_*.json
+
+# Runtime patient data (PHI)
+ai-scribe-data/
+
+# ASR training data (generated, large)
+data/asr_training/
 
 # Temp / scratch
 tmp/
