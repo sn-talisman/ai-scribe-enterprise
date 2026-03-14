@@ -1,0 +1,11 @@
+{
+  "encounter_id": "03d23dda",
+  "provider_id": "dr_mohammed_alwahaidy",
+  "patient_id": "P-10002",
+  "visit_type": "initial_evaluation",
+  "mode": "dictation",
+  "date_of_service": "2026-03-14",
+  "created_at": "2026-03-14T17:54:59.000438",
+  "audio_file": "dictation.mp3",
+  "has_gold_standard": false
+}

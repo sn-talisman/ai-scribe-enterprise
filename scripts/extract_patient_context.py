@@ -26,7 +26,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_DATA_ROOT = Path("ai-scribe-data")
+from config.paths import DATA_DIR as _DATA_ROOT
 _MODES = ("conversation", "dictation")
 
 # ─── Header field patterns ──────────────────────────────────────────────────

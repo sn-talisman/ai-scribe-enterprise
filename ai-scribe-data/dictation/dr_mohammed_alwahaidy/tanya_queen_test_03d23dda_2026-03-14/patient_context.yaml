@@ -1,0 +1,15 @@
+encounter:
+  date_of_service: '2026-03-14'
+  visit_type: initial_evaluation
+facility:
+  location: ''
+  name: Talisman Solutions
+patient:
+  date_of_birth: '1985-03-22'
+  mrn: '223818'
+  name: Tanya Queen_TEST
+  sex: Female
+provider:
+  credentials: DC
+  name: Dr. Mohammed Alwahaidy
+  specialty: chiropractic

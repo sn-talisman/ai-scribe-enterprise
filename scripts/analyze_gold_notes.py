@@ -31,10 +31,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_DATA_ROOT = Path("ai-scribe-data")
+from config.paths import DATA_DIR as _DATA_ROOT, OUTPUT_DIR as _OUTPUT_DIR, CONFIG_DIR
+
 _MODES = ("conversation", "dictation")
-_TEMPLATES_DIR = Path("config/templates")
-_OUTPUT_DIR = Path("output")
+_TEMPLATES_DIR = CONFIG_DIR / "templates"
 
 
 def _collect_gold_notes(data_root: Path) -> list[tuple[Path, str]]:

@@ -1,12 +1,24 @@
-# PHI / Test Data — NEVER COMMIT
-data/dictation/
-data/conversation/
-data/conversations/
+# Audio files — large, contain PHI voice data
 *.mp3
 *.wav
 *.m4a
 *.ogg
 *.flac
+
+# Word documents (gold note source — converted to .md already)
+*.doc
+*.docx
+
+# Legacy data directories (replaced by ai-scribe-data/)
+data/dictation/
+data/conversation/
+data/conversations/
+
+# ASR training data (generated, large)
+data/asr_training/
+
+# Transcript caches (large JSON blobs, regenerable)
+output/transcript_cache_*.json
 
 # Python
 __pycache__/
@@ -62,20 +74,6 @@ logs/
 # Database
 *.db
 *.sqlite3
-
-# Generated outputs (contain PHI from test data)
-output/dictation/
-output/conversation/
-output/conversations/
-output/batch_report_*.md
-output/quality_report_*.md
-output/transcript_cache_*.json
-
-# Runtime patient data (PHI)
-ai-scribe-data/
-
-# ASR training data (generated, large)
-data/asr_training/
 
 # Temp / scratch
 tmp/

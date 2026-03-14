@@ -29,11 +29,7 @@ from typing import Optional
 
 import yaml
 
-# Repository root (two levels up from this file)
-ROOT = Path(__file__).parent.parent
-OUTPUT_DIR = ROOT / "output"
-DATA_DIR = ROOT / "ai-scribe-data"
-PROVIDERS_DIR = ROOT / "config" / "providers"
+from config.paths import ROOT, OUTPUT_DIR, DATA_DIR, PROVIDERS_DIR
 
 _KNOWN_VERSIONS = ["v7", "v6", "v5", "v4", "v3", "v2", "v1"]
 

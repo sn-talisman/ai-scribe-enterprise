@@ -1,0 +1,15 @@
+encounter:
+  date_of_service: '2026-03-14'
+  visit_type: initial_evaluation
+facility:
+  location: ''
+  name: Talisman Solutions
+patient:
+  date_of_birth: '1990-11-08'
+  mrn: '206551'
+  name: Daisy Colina_TEST
+  sex: Female
+provider:
+  credentials: DO
+  name: Dr. Caleb Ademiloye
+  specialty: orthopedic

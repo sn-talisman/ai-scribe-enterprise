@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-OUTPUT_DIR = Path("output")
-DEFAULT_CACHE = "output/transcript_cache_v7q14.json"
+from config.paths import OUTPUT_DIR
+DEFAULT_CACHE = str(OUTPUT_DIR / "transcript_cache_v7q14.json")
 DEFAULT_VERSIONS = ["v1", "v2", "v3", "v4", "v5"]
 
 

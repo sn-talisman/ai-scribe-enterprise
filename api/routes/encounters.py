@@ -31,9 +31,7 @@ from api.models import (
 router = APIRouter(prefix="/encounters", tags=["encounters"])
 logger = structlog.get_logger()
 
-ROOT = Path(__file__).parent.parent.parent
-DATA_DIR = ROOT / "ai-scribe-data"
-OUTPUT_DIR = ROOT / "output"
+from config.paths import ROOT, DATA_DIR, OUTPUT_DIR
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +163,8 @@ _encounters: dict[str, dict] = {}
 
 def _load_patient_from_roster(patient_id: str) -> dict | None:
     """Look up a patient by ID from the stub EHR roster."""
-    roster_path = ROOT / "config" / "ehr_stub" / "patient_roster.json"
+    from config.paths import CONFIG_DIR
+    roster_path = CONFIG_DIR / "ehr_stub" / "patient_roster.json"
     if not roster_path.exists():
         return None
     data = json.loads(roster_path.read_text())

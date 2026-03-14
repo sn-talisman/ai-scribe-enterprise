@@ -65,7 +65,8 @@ from orchestrator.state import (
 # Test data paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-_DATA_DIR = Path(__file__).parent.parent / "ai-scribe-data" / "dictation" / "dr_faraz_rahman" / "riley_dew_226680_20260219"
+from config.paths import DATA_DIR as _DATA_ROOT
+_DATA_DIR = _DATA_ROOT / "dictation" / "dr_faraz_rahman" / "riley_dew_226680_20260219"
 _AUDIO_PATH = _DATA_DIR / "dictation.mp3"
 _GOLD_PATH = _DATA_DIR / "final_soap_note.md"
 

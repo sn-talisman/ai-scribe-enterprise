@@ -25,8 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_OUTPUT_DIR = Path("output")
-_DATA_ROOT = Path("ai-scribe-data")
+from config.paths import DATA_DIR as _DATA_ROOT, OUTPUT_DIR as _OUTPUT_DIR
 _MODES = ("conversation", "dictation")
 _GOLD_NAME = "final_soap_note.md"
 

@@ -15,7 +15,8 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
-ROSTER_PATH = Path("config/ehr_stub/patient_roster.json")
+from config.paths import CONFIG_DIR
+ROSTER_PATH = CONFIG_DIR / "ehr_stub" / "patient_roster.json"
 
 _roster_cache: list[dict] | None = None
 

@@ -51,7 +51,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-ROOT = Path(__file__).parent.parent
+from config.paths import ROOT, OUTPUT_DIR as _OUTPUT_DIR
 CORRECTIONS_DIR = ROOT / "data" / "asr_corrections"
 MODELS_DIR = ROOT / "models" / "whisper_lora"
 
@@ -307,7 +307,7 @@ def validate_new_adapter(provider_id: str, max_samples: int = 5) -> bool:
         )
 
         # Load previous eval results if they exist
-        prev_json = ROOT / "output" / f"asr_eval_{provider_id}.json"
+        prev_json = _OUTPUT_DIR / f"asr_eval_{provider_id}.json"
         if prev_json.exists():
             prev = json.loads(prev_json.read_text())
             prev_wer = prev.get("summary", {}).get("lora_avg_wer")

@@ -99,7 +99,8 @@ def main() -> None:
     print(final.final_note.to_text())
 
     if args.save:
-        out_dir = Path("output") / audio_path.parent.name
+        from config.paths import OUTPUT_DIR
+        out_dir = OUTPUT_DIR / audio_path.parent.name
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "transcript.txt").write_text(final.transcript.full_text)
         (out_dir / "note.md").write_text(final.final_note.to_text())

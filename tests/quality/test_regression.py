@@ -16,9 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-ROOT = Path(__file__).parent.parent.parent
-BASELINE_PATH = ROOT / "config" / "quality_baseline.yaml"
-OUTPUT_DIR = ROOT / "output"
+from config.paths import ROOT, CONFIG_DIR, OUTPUT_DIR
+BASELINE_PATH = CONFIG_DIR / "quality_baseline.yaml"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

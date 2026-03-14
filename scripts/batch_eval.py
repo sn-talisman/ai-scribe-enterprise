@@ -38,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_DATA_ROOT = Path("ai-scribe-data")
+from config.paths import DATA_DIR as _DATA_ROOT, OUTPUT_DIR as _OUTPUT_ROOT
 _MODES = ("conversation", "dictation")
 
 # Audio filename per mode
@@ -537,7 +537,7 @@ def main() -> None:
     parser.add_argument("--version", default="v7", help="Pipeline version label")
     parser.add_argument("--data-dir", default=None,
                         help="Data root (default: ai-scribe-data). Can point to a subdirectory.")
-    parser.add_argument("--output-dir", default="output")
+    parser.add_argument("--output-dir", default=str(_OUTPUT_ROOT))
     parser.add_argument("--model", default=None,
                         help="Ollama model name (default: auto-discover)")
     parser.add_argument("--two-pass", action="store_true",
