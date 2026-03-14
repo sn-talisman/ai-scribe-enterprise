@@ -26,7 +26,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_DATA_DIRS = ["data/dictation", "data/conversations"]
+_DATA_ROOT = Path("ai-scribe-data")
+_MODES = ("conversation", "dictation")
 
 # ─── Header field patterns ──────────────────────────────────────────────────
 # Handles both plain text ("FIRST NAME:  VALUE") and markdown ("**FIRST NAME:** VALUE")
@@ -181,13 +182,15 @@ def extract_context(gold_note_path: Path) -> dict:
 
 def process_sample(sample_dir: Path) -> Path | None:
     """Extract context from a sample directory and write patient_context.yaml."""
-    # Find gold note
-    for gold_name in ("soap_final.md", "soap_initial.md"):
-        gold_path = sample_dir / gold_name
-        if gold_path.exists():
-            break
-    else:
-        return None
+    # Find gold note (new format first, then legacy)
+    gold_path = sample_dir / "final_soap_note.md"
+    if not gold_path.exists():
+        for gold_name in ("soap_final.md", "soap_initial.md"):
+            gold_path = sample_dir / gold_name
+            if gold_path.exists():
+                break
+        else:
+            return None
 
     context = extract_context(gold_path)
     out_path = sample_dir / "patient_context.yaml"
@@ -198,8 +201,8 @@ def process_sample(sample_dir: Path) -> Path | None:
 
 def main():
     parser = argparse.ArgumentParser(description="Extract patient context from gold notes")
-    parser.add_argument("--data-dir", nargs="*", default=_DATA_DIRS,
-                        help="Data directories to scan")
+    parser.add_argument("--data-dir", default=None,
+                        help="Data root (default: ai-scribe-data)")
     parser.add_argument("--sample", type=str, default=None,
                         help="Single sample directory to process")
     args = parser.parse_args()
@@ -213,18 +216,22 @@ def main():
             print(f"No gold note found in {sample_dir}")
         return
 
+    data_root = Path(args.data_dir) if args.data_dir else _DATA_ROOT
     total = 0
-    for data_dir_str in args.data_dir:
-        data_dir = Path(data_dir_str)
-        if not data_dir.exists():
+    for mode in _MODES:
+        mode_dir = data_root / mode
+        if not mode_dir.exists():
             continue
-        for sample_dir in sorted(data_dir.iterdir()):
-            if not sample_dir.is_dir():
+        for physician_dir in sorted(mode_dir.iterdir()):
+            if not physician_dir.is_dir():
                 continue
-            result = process_sample(sample_dir)
-            if result:
-                total += 1
-                print(f"  {result}")
+            for encounter_dir in sorted(physician_dir.iterdir()):
+                if not encounter_dir.is_dir():
+                    continue
+                result = process_sample(encounter_dir)
+                if result:
+                    total += 1
+                    print(f"  {result}")
 
     print(f"\nExtracted context for {total} samples")
 

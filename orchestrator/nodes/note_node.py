@@ -370,6 +370,25 @@ def _budget_transcript(text: str, max_chars: int = 24_000) -> str:
     return text[:max_chars] + "\n[TRANSCRIPT TRUNCATED]"
 
 
+# Threshold below which the transcript is considered too short for a full note.
+# ~200 chars ≈ 1-3 sentences — not enough for detailed clinical documentation.
+_SHORT_TRANSCRIPT_CHARS = 200
+
+
+def _short_transcript_warning(text: str) -> str:
+    """Return a warning string to inject if the transcript is suspiciously short/vague."""
+    stripped = text.strip()
+    if len(stripped) < _SHORT_TRANSCRIPT_CHARS:
+        word_count = len(stripped.split())
+        return (
+            f"\n\nWARNING: The transcript above is very short ({word_count} words). "
+            "Generate a correspondingly SHORT note using ONLY what is stated above. "
+            "For any section where the transcript provides no information, write "
+            "\"Not documented in this encounter.\" Do NOT fabricate clinical details.\n"
+        )
+    return ""
+
+
 def assemble_prompt(state: EncounterState) -> tuple[str, str, NoteTemplate]:
     """
     Build (system_prompt, user_message, template) for the LLM.
@@ -398,6 +417,8 @@ def assemble_prompt(state: EncounterState) -> tuple[str, str, NoteTemplate]:
         state.provider_profile.specialty,
     )
 
+    short_warning = _short_transcript_warning(transcript_text)
+
     user_message: str = block["user_template"].format(
         context_block=_assemble_context_block(state),
         template_block=_assemble_template_block(template),
@@ -405,6 +426,13 @@ def assemble_prompt(state: EncounterState) -> tuple[str, str, NoteTemplate]:
         transcript=transcript_text,
         style_block=_assemble_style_block(state),
     ).strip()
+
+    if short_warning:
+        user_message += short_warning
+        logger.warning(
+            "note_node: short transcript detected (%d chars) — injecting anti-hallucination guard",
+            len(transcript_text.strip()),
+        )
 
     return system_prompt, user_message, template
 

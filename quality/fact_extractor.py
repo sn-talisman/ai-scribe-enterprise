@@ -9,10 +9,79 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _repair_json(raw: str) -> dict:
+    """Attempt to parse JSON, applying incremental repairs on failure.
+
+    Handles common LLM output issues: unterminated strings, trailing commas,
+    missing closing brackets, and truncated output.
+    """
+    # Strategy 1: direct parse
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    text = raw
+
+    # Strategy 2: strip trailing incomplete entries and fix structure
+    # Remove trailing commas before ] or }
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
+    # Fix unterminated strings: find last unterminated quote and close it
+    # Count quotes — if odd number, append a closing quote
+    if text.count('"') % 2 == 1:
+        text = text.rstrip()
+        # If we're mid-string, close it
+        if not text.endswith('"'):
+            text += '"'
+
+    # Ensure arrays are closed — count [ vs ]
+    open_brackets = text.count("[") - text.count("]")
+    open_braces = text.count("{") - text.count("}")
+    text = text.rstrip().rstrip(",")
+    text += "]" * max(0, open_brackets)
+    text += "}" * max(0, open_braces)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 3: truncate to last valid array entry
+    # Find the last complete "..." entry and cut there
+    last_good = text.rfind('",')
+    if last_good > 0:
+        truncated = text[: last_good + 1]
+        open_brackets = truncated.count("[") - truncated.count("]")
+        open_braces = truncated.count("{") - truncated.count("}")
+        truncated += "]" * max(0, open_brackets)
+        truncated += "}" * max(0, open_braces)
+        try:
+            return json.loads(truncated)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 4: regex extraction — pull out individual arrays
+    result: dict[str, list[str]] = {}
+    for key in ("medications", "diagnoses", "exam_findings", "plan_items"):
+        pattern = rf'"{key}"\s*:\s*\[(.*?)\]'
+        m = re.search(pattern, raw, re.DOTALL)
+        if m:
+            items = re.findall(r'"([^"]*)"', m.group(1))
+            result[key] = items
+    if result:
+        return result
+
+    # All strategies failed — return empty
+    logger.warning("fact_extractor: all JSON repair strategies failed")
+    return {}
 
 
 @dataclass
@@ -79,7 +148,7 @@ For exam findings include specific measurements (degrees, grades) if mentioned."
         raw = response.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        data = json.loads(raw)
+        data = _repair_json(raw)
         return ExtractedFacts(
             medications=[str(m).lower() for m in data.get("medications", [])],
             diagnoses=[str(d).lower() for d in data.get("diagnoses", [])],

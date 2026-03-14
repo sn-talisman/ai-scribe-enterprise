@@ -5,7 +5,7 @@ Test layers:
   Unit  — mock LLM engine, no Ollama required (always passes)
   Integ — real Ollama call (skipped if Ollama not running)
 
-Real transcript from data/dictation/224889/ is used for the integration test.
+Real transcript from ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/ is used for the integration test.
 """
 
 from __future__ import annotations
@@ -440,9 +440,9 @@ class TestNoteNodeIntegration:
         import re as re_module
         from pathlib import Path
 
-        gold_path = Path("data/dictation/224889/soap_final.md")
+        gold_path = Path("ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/final_soap_note.md")
         if not gold_path.exists():
-            pytest.skip("Test data not found at data/dictation/224889/soap_final.md")
+            pytest.skip("Test data not found at ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/final_soap_note.md")
 
         gold_text = gold_path.read_text()
         body_match = re_module.search(r"SUBJECTIVE:.+", gold_text, re_module.DOTALL)

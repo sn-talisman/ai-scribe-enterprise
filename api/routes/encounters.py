@@ -2,13 +2,20 @@
 api/routes/encounters.py
 
 Encounter / sample routes. Reads from the output/ and data/ directories.
+Supports creating new encounters with audio upload → pipeline trigger.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
+from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+import structlog
+import yaml
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from api import data_loader as dl
 from api.models import (
@@ -22,6 +29,11 @@ from api.models import (
 )
 
 router = APIRouter(prefix="/encounters", tags=["encounters"])
+logger = structlog.get_logger()
+
+ROOT = Path(__file__).parent.parent.parent
+DATA_DIR = ROOT / "ai-scribe-data"
+OUTPUT_DIR = ROOT / "output"
 
 
 # ---------------------------------------------------------------------------
@@ -147,14 +159,26 @@ def get_sample_quality(
 # Create & upload (triggers pipeline run)
 # ---------------------------------------------------------------------------
 
-# In-memory store for demo — replace with DB in production
+# In-memory store for live encounters — replace with DB in production
 _encounters: dict[str, dict] = {}
+
+
+def _load_patient_from_roster(patient_id: str) -> dict | None:
+    """Look up a patient by ID from the stub EHR roster."""
+    roster_path = ROOT / "config" / "ehr_stub" / "patient_roster.json"
+    if not roster_path.exists():
+        return None
+    data = json.loads(roster_path.read_text())
+    for p in data.get("patients", []):
+        if p["id"] == patient_id:
+            return p
+    return None
 
 
 @router.post("", response_model=EncounterResponse, status_code=201)
 def create_encounter(req: EncounterCreateRequest):
     """Create a new encounter (returns encounter_id for polling)."""
-    encounter_id = str(uuid.uuid4())
+    encounter_id = str(uuid.uuid4())[:8]
     enc = {
         "encounter_id": encounter_id,
         "status": "pending",
@@ -169,29 +193,424 @@ def create_encounter(req: EncounterCreateRequest):
 
 
 @router.post("/{encounter_id}/upload")
-async def upload_audio(encounter_id: str):
+async def upload_audio(
+    encounter_id: str,
+    audio: UploadFile = File(...),
+):
     """
-    Audio upload endpoint. Accepts multipart form data.
-    Triggers the pipeline as a background task.
+    Upload audio and trigger the encounter pipeline.
 
-    Note: Full pipeline execution requires WhisperX + Ollama running locally.
-    This endpoint registers the upload and marks the encounter as processing.
+    Creates the encounter folder in ai-scribe-data/, generates
+    patient_context.yaml + encounter metadata, saves the audio file,
+    then launches the pipeline asynchronously with WebSocket progress events.
     """
     enc = _encounters.get(encounter_id)
     if not enc:
         raise HTTPException(status_code=404, detail=f"Encounter '{encounter_id}' not found")
 
-    enc["status"] = "processing"
-    enc["message"] = "Audio received — pipeline queued (requires local GPU + Ollama)"
+    provider_id = enc["provider_id"]
+    patient_id = enc["patient_id"]
+    visit_type = enc["visit_type"]
+    mode = enc["mode"]
+    today = date.today().isoformat()
 
-    # TODO (Session 9 extension): launch pipeline via asyncio.create_task
-    # and emit progress events via WebSocket
+    # Look up patient from roster
+    patient = _load_patient_from_roster(patient_id)
+    patient_name = "unknown"
+    if patient:
+        patient_name = f"{patient['first_name']}_{patient['last_name']}".lower()
+
+    # Build folder name: {patient_name}_{encounter_id}_{date}
+    folder_name = f"{patient_name}_{encounter_id}_{today}"
+    data_mode = "conversation" if mode == "ambient" else "dictation"
+
+    # Create data folder: ai-scribe-data/{mode}/{provider_id}/{folder_name}/
+    encounter_dir = DATA_DIR / data_mode / provider_id / folder_name
+    encounter_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create matching output folder
+    output_encounter_dir = OUTPUT_DIR / data_mode / provider_id / folder_name
+    output_encounter_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save audio file
+    audio_filename = "dictation.mp3" if mode == "dictation" else "conversation_audio.mp3"
+    audio_path = encounter_dir / audio_filename
+    content = await audio.read()
+    audio_path.write_bytes(content)
+
+    # Generate patient_context.yaml (same format as batch data)
+    patient_context = {
+        "patient": {
+            "name": f"{patient['first_name']} {patient['last_name']}" if patient else "Unknown",
+            "date_of_birth": patient.get("date_of_birth", "") if patient else "",
+            "sex": patient.get("sex", "") if patient else "",
+            "mrn": patient.get("mrn", "") if patient else "",
+        },
+        "encounter": {
+            "date_of_service": today,
+            "visit_type": visit_type,
+        },
+        "provider": {
+            "name": provider_id,
+            "credentials": "",
+            "specialty": "",
+        },
+        "facility": {
+            "name": "Talisman Solutions",
+            "location": "",
+        },
+    }
+
+    # Enrich provider context from provider profile if available
+    try:
+        from config.provider_manager import get_provider_manager
+        mgr = get_provider_manager()
+        profile = mgr.load_or_default(provider_id)
+        patient_context["provider"]["name"] = profile.name or provider_id
+        patient_context["provider"]["credentials"] = profile.credentials or ""
+        patient_context["provider"]["specialty"] = profile.specialty or ""
+    except Exception:
+        pass
+
+    context_path = encounter_dir / "patient_context.yaml"
+    context_path.write_text(yaml.dump(patient_context, default_flow_style=False))
+
+    # Generate patient_demographics.json
+    demographics = {
+        "patient_id": patient_id,
+        "first_name": patient["first_name"] if patient else "Unknown",
+        "last_name": patient["last_name"] if patient else "Unknown",
+        "date_of_birth": patient.get("date_of_birth", "") if patient else "",
+        "sex": patient.get("sex", "") if patient else "",
+        "mrn": patient.get("mrn", "") if patient else "",
+    }
+    (encounter_dir / "patient_demographics.json").write_text(
+        json.dumps(demographics, indent=2)
+    )
+
+    # Generate encounter_details.json
+    encounter_details = {
+        "encounter_id": encounter_id,
+        "provider_id": provider_id,
+        "patient_id": patient_id,
+        "visit_type": visit_type,
+        "mode": mode,
+        "date_of_service": today,
+        "created_at": datetime.utcnow().isoformat(),
+        "audio_file": audio_filename,
+        "has_gold_standard": False,
+    }
+    (encounter_dir / "encounter_details.json").write_text(
+        json.dumps(encounter_details, indent=2)
+    )
+
+    # Update in-memory state
+    enc["status"] = "processing"
+    enc["message"] = "Audio received — pipeline running"
+    enc["sample_id"] = folder_name
+    enc["data_dir"] = str(encounter_dir)
+    enc["output_dir"] = str(output_encounter_dir)
+
+    # Launch pipeline in background
+    asyncio.create_task(
+        _run_pipeline_async(
+            encounter_id=encounter_id,
+            sample_id=folder_name,
+            audio_path=str(audio_path),
+            mode=mode,
+            provider_id=provider_id,
+            visit_type=visit_type,
+            output_dir=str(output_encounter_dir),
+            data_dir=str(encounter_dir),
+        )
+    )
 
     return {
         "encounter_id": encounter_id,
+        "sample_id": folder_name,
         "status": "processing",
-        "message": enc["message"],
+        "message": "Audio received — pipeline running",
     }
+
+
+async def _run_pipeline_async(
+    encounter_id: str,
+    sample_id: str,
+    audio_path: str,
+    mode: str,
+    provider_id: str,
+    visit_type: str,
+    output_dir: str,
+    data_dir: str,
+) -> None:
+    """Run the encounter pipeline in the background, sending WebSocket events."""
+    from api.ws.session_events import manager
+
+    enc = _encounters.get(encounter_id, {})
+
+    try:
+        # Give the client a moment to connect its WebSocket before we send events.
+        await asyncio.sleep(1.0)
+
+        await manager.send_progress(encounter_id, "init", 5, "Loading provider profile...")
+
+        # Load provider profile
+        from config.provider_manager import get_provider_manager
+        mgr = get_provider_manager()
+        profile = mgr.load_or_default(provider_id)
+
+        await manager.send_progress(encounter_id, "init", 10, "Building pipeline...")
+
+        # Build encounter state
+        from orchestrator.state import (
+            DeliveryMethod,
+            EncounterState,
+            RecordingMode,
+        )
+
+        recording_mode = RecordingMode.AMBIENT if mode == "ambient" else RecordingMode.DICTATION
+
+        state = EncounterState(
+            provider_id=profile.id,
+            patient_id=f"patient-{sample_id}",
+            provider_profile=profile,
+            recording_mode=recording_mode,
+            delivery_method=DeliveryMethod.CLIPBOARD,
+            audio_file_path=audio_path,
+        )
+
+        await manager.send_progress(encounter_id, "transcribe", 20, "Starting ASR transcription...")
+
+        # Run the pipeline synchronously in a thread to avoid blocking the event loop
+        from orchestrator.graph import build_graph, run_encounter
+        graph = build_graph()
+
+        final = await asyncio.to_thread(run_encounter, graph, state)
+
+        await manager.send_progress(encounter_id, "transcribe", 50, "Transcription complete")
+
+        # Save outputs
+        out_path = Path(output_dir)
+
+        # Save generated note
+        if final.final_note:
+            from output.markdown_writer import write_clinical_note
+            write_clinical_note(
+                final,
+                path=out_path / "generated_note_v7.md",
+                version="v7",
+                sample_id=sample_id,
+            )
+            await manager.send_progress(encounter_id, "note", 80, "Clinical note generated")
+
+        # Save standalone transcript
+        if final.transcript and final.transcript.full_text.strip():
+            transcript_path = out_path / "audio_transcript_v7.txt"
+            transcript_path.write_text(final.transcript.full_text.strip())
+            await manager.send_progress(encounter_id, "note", 85, "Transcript saved")
+
+        await manager.send_progress(encounter_id, "delivery", 95, "Finalizing...")
+
+        # Update in-memory state
+        enc["status"] = "complete"
+        enc["message"] = "Pipeline complete — note generated"
+
+        await manager.send_complete(encounter_id, sample_id)
+
+        logger.info(
+            "pipeline_complete",
+            encounter_id=encounter_id,
+            sample_id=sample_id,
+        )
+
+    except Exception as e:
+        logger.error(
+            "pipeline_error",
+            encounter_id=encounter_id,
+            error=str(e),
+        )
+        enc["status"] = "error"
+        enc["message"] = f"Pipeline error: {str(e)}"
+        await manager.send_error(encounter_id, str(e))
+
+
+@router.post("/{sample_id}/rerun")
+async def rerun_pipeline(sample_id: str):
+    """
+    Re-run the pipeline on an existing sample, auto-incrementing the version.
+
+    Finds the sample's audio file, detects the next version number,
+    and launches the pipeline asynchronously.
+    """
+    # Find the sample in data directories
+    result = dl._data_dir_for(sample_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found in data")
+
+    data_mode, physician, data_dir = result
+
+    # Find audio file
+    audio_path = None
+    for candidate in ["dictation.mp3", "conversation_audio.mp3", "notes.mp3", "conversation.mp3"]:
+        p = data_dir / candidate
+        if p.exists():
+            audio_path = str(p)
+            break
+    if not audio_path:
+        raise HTTPException(status_code=404, detail=f"No audio file found for sample '{sample_id}'")
+
+    # Determine the output directory
+    out_dir = dl._output_dir_for(sample_id)
+    if out_dir is None:
+        # Create it mirroring the data layout
+        out_dir = OUTPUT_DIR / data_mode / physician / sample_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Detect next version number
+    existing_versions = sorted(
+        [int(f.stem.split("_v")[1]) for f in out_dir.glob("generated_note_v*.md")
+         if f.stem.split("_v")[1].isdigit()],
+        reverse=True,
+    )
+    next_version_num = (existing_versions[0] + 1) if existing_versions else 8
+    next_version = f"v{next_version_num}"
+
+    # Determine mode
+    mode = "ambient" if data_mode == "conversation" else "dictation"
+
+    # Create a tracking entry
+    encounter_id = f"rerun-{str(uuid.uuid4())[:8]}"
+    _encounters[encounter_id] = {
+        "encounter_id": encounter_id,
+        "status": "processing",
+        "provider_id": physician,
+        "patient_id": f"patient-{sample_id}",
+        "visit_type": "",
+        "mode": mode,
+        "message": f"Re-running pipeline → {next_version}",
+        "sample_id": sample_id,
+        "version": next_version,
+    }
+
+    # Also check for note_audio (conversation mode has two audio files)
+    note_audio_path = None
+    if data_mode == "conversation":
+        for candidate in ["notes.mp3", "note_audio.mp3"]:
+            p = data_dir / candidate
+            if p.exists():
+                note_audio_path = str(p)
+                break
+
+    asyncio.create_task(
+        _run_rerun_pipeline(
+            encounter_id=encounter_id,
+            sample_id=sample_id,
+            audio_path=audio_path,
+            note_audio_path=note_audio_path,
+            mode=mode,
+            provider_id=physician,
+            output_dir=str(out_dir),
+            version=next_version,
+        )
+    )
+
+    return {
+        "encounter_id": encounter_id,
+        "sample_id": sample_id,
+        "version": next_version,
+        "status": "processing",
+        "message": f"Pipeline re-run started → {next_version}",
+    }
+
+
+async def _run_rerun_pipeline(
+    encounter_id: str,
+    sample_id: str,
+    audio_path: str,
+    note_audio_path: str | None,
+    mode: str,
+    provider_id: str,
+    output_dir: str,
+    version: str,
+) -> None:
+    """Re-run pipeline on existing sample, saving output with the given version."""
+    from api.ws.session_events import manager
+
+    enc = _encounters.get(encounter_id, {})
+
+    try:
+        # Give the client a moment to connect its WebSocket before we send events.
+        # The rerun POST returns the encounter_id; the client opens a WS with it.
+        # Without this pause, early progress events are lost because no WS is connected yet.
+        await asyncio.sleep(1.0)
+
+        await manager.send_progress(encounter_id, "init", 5, "Loading provider profile...")
+
+        from config.provider_manager import get_provider_manager
+        mgr = get_provider_manager()
+        profile = mgr.load_or_default(provider_id)
+
+        await manager.send_progress(encounter_id, "init", 10, "Building pipeline...")
+
+        from orchestrator.state import (
+            DeliveryMethod,
+            EncounterState,
+            RecordingMode,
+        )
+
+        recording_mode = RecordingMode.AMBIENT if mode == "ambient" else RecordingMode.DICTATION
+
+        state = EncounterState(
+            provider_id=profile.id,
+            patient_id=f"patient-{sample_id}",
+            provider_profile=profile,
+            recording_mode=recording_mode,
+            delivery_method=DeliveryMethod.CLIPBOARD,
+            audio_file_path=audio_path,
+            note_audio_file_path=note_audio_path,
+        )
+
+        await manager.send_progress(encounter_id, "transcribe", 20, "Starting ASR transcription...")
+
+        from orchestrator.graph import build_graph, run_encounter
+        graph = build_graph()
+
+        final = await asyncio.to_thread(run_encounter, graph, state)
+
+        await manager.send_progress(encounter_id, "transcribe", 50, "Transcription complete")
+
+        out_path = Path(output_dir)
+
+        if final.final_note:
+            from output.markdown_writer import write_clinical_note
+            write_clinical_note(
+                final,
+                path=out_path / f"generated_note_{version}.md",
+                version=version,
+                sample_id=sample_id,
+            )
+            await manager.send_progress(encounter_id, "note", 80, "Clinical note generated")
+
+        if final.transcript and final.transcript.full_text.strip():
+            transcript_path = out_path / f"audio_transcript_{version}.txt"
+            transcript_path.write_text(final.transcript.full_text.strip())
+            await manager.send_progress(encounter_id, "note", 85, "Transcript saved")
+
+        await manager.send_progress(encounter_id, "delivery", 95, "Finalizing...")
+
+        enc["status"] = "complete"
+        enc["message"] = f"Pipeline complete — {version} generated"
+
+        await manager.send_complete(encounter_id, sample_id)
+
+        logger.info("rerun_pipeline_complete", encounter_id=encounter_id,
+                     sample_id=sample_id, version=version)
+
+    except Exception as e:
+        logger.error("rerun_pipeline_error", encounter_id=encounter_id, error=str(e))
+        enc["status"] = "error"
+        enc["message"] = f"Pipeline error: {str(e)}"
+        await manager.send_error(encounter_id, str(e))
 
 
 @router.get("/{encounter_id}/status")

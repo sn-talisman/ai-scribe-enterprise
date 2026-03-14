@@ -1,20 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   FileText,
   Users,
-  Upload,
+  Mic,
   Activity,
+  Stethoscope,
+  ClipboardList,
 } from "lucide-react";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/samples", label: "Samples", icon: FileText },
   { href: "/providers", label: "Providers", icon: Users },
-  { href: "/upload", label: "Upload", icon: Upload },
+  { href: "/specialties", label: "Specialties", icon: Stethoscope },
+  { href: "/templates", label: "Templates", icon: ClipboardList },
+  { href: "/capture", label: "Capture", icon: Mic },
 ];
 
 export default function Sidebar() {
@@ -27,12 +32,13 @@ export default function Sidebar() {
     >
       {/* Logo / Brand */}
       <div className="flex items-center gap-3 px-5 py-6 border-b border-white/10">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm"
-          style={{ background: "var(--brand-green)" }}
-        >
-          T
-        </div>
+        <Image
+          src="/talisman-logo.svg"
+          alt="Talisman Solutions"
+          width={36}
+          height={36}
+          className="flex-shrink-0"
+        />
         <div>
           <div className="text-white font-semibold text-sm leading-tight">
             Talisman Solutions
@@ -77,7 +83,7 @@ export default function Sidebar() {
       <div className="px-5 py-4 border-t border-white/10">
         <div className="flex items-center gap-2">
           <Activity size={12} className="text-green-400" />
-          <span className="text-white/40 text-xs">Pipeline v4 · 4.38/5.0</span>
+          <span className="text-white/40 text-xs">Pipeline v8 · 4.44/5.0</span>
         </div>
       </div>
     </aside>

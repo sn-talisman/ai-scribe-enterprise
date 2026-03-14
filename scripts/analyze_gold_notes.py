@@ -31,27 +31,32 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_DATA_DIRS = ["data/dictation", "data/conversations"]
+_DATA_ROOT = Path("ai-scribe-data")
+_MODES = ("conversation", "dictation")
 _TEMPLATES_DIR = Path("config/templates")
 _OUTPUT_DIR = Path("output")
 
 
-def _collect_gold_notes(data_dirs: list[str]) -> list[tuple[Path, str]]:
-    """Return list of (note_path, source_type) for all gold notes found."""
+def _collect_gold_notes(data_root: Path) -> list[tuple[Path, str]]:
+    """Return list of (note_path, source_type) for all gold notes found.
+
+    Walks: data_root/<mode>/<physician>/<encounter>/final_soap_note.md
+    """
     notes = []
-    for d in data_dirs:
-        data_dir = Path(d)
-        if not data_dir.exists():
+    for mode in _MODES:
+        mode_dir = data_root / mode
+        if not mode_dir.exists():
             continue
-        source = "dictation" if "dictation" in d else "conversation"
-        for sample_dir in sorted(data_dir.iterdir()):
-            if not sample_dir.is_dir():
+        source = "dictation" if mode == "dictation" else "conversation"
+        for physician_dir in sorted(mode_dir.iterdir()):
+            if not physician_dir.is_dir():
                 continue
-            for gold_name in ("soap_final.md", "soap_initial.md"):
-                gold = sample_dir / gold_name
+            for encounter_dir in sorted(physician_dir.iterdir()):
+                if not encounter_dir.is_dir():
+                    continue
+                gold = encounter_dir / "final_soap_note.md"
                 if gold.exists():
                     notes.append((gold, source))
-                    break
     return notes
 
 
@@ -281,8 +286,8 @@ def main() -> None:
     parser.add_argument("--output-dir", default="output")
     args = parser.parse_args()
 
-    data_dirs = [args.data_dir] if args.data_dir else _DATA_DIRS
-    notes = _collect_gold_notes(data_dirs)
+    data_root = Path(args.data_dir) if args.data_dir else _DATA_ROOT
+    notes = _collect_gold_notes(data_root)
 
     if not notes:
         print("No gold notes found.")

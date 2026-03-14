@@ -363,6 +363,7 @@ class EncounterState(BaseModel):
     # ── CAPTURE NODE output ───────────────────────────────────────────────
     audio_segments: list[AudioSegment] = Field(default_factory=list)
     audio_file_path: Optional[str] = None   # Convenience: path to a single uploaded file
+    note_audio_file_path: Optional[str] = None  # Physician dictation audio (conversation mode)
     mode_events: list[ModeEvent] = Field(default_factory=list)
     voice_commands: list[VoiceCommand] = Field(default_factory=list)
     typed_addendums: list[Addendum] = Field(default_factory=list)

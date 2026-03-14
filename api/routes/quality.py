@@ -52,6 +52,18 @@ def get_dimension_breakdown(version: str = Query(dl.LATEST_VERSION)):
     ]
 
 
+@router.get("/by-mode")
+def get_quality_by_mode(version: str = Query(dl.LATEST_VERSION)):
+    """Aggregate quality broken down by dictation vs ambient."""
+    return dl.get_aggregate_quality_by_mode(version)
+
+
+@router.get("/by-provider")
+def get_quality_by_provider(version: str = Query(dl.LATEST_VERSION)):
+    """Aggregate quality per provider."""
+    return dl.get_aggregate_quality_by_provider(version)
+
+
 @router.get("/batch/{version}")
 def get_batch_stats(version: str):
     """Pipeline batch run stats (timing, ASR confidence, etc.)."""

@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-DATA_DIR = ROOT / "data"
+DATA_DIR = ROOT / "ai-scribe-data"
 OUTPUT_DIR = ROOT / "output"
 
 
@@ -236,9 +236,13 @@ def transcribe_with_lora(audio_path: str, provider_id: str) -> str:
 
 def get_reference_text(sample_dir: Path) -> str:
     """Extract plain text from the gold note to use as reference transcript."""
-    # Import from prepare_asr_training_data
     from scripts.prepare_asr_training_data import extract_plain_text
 
+    # New format
+    gold = sample_dir / "final_soap_note.md"
+    if gold.exists():
+        return extract_plain_text(gold)
+    # Legacy fallback
     for fname in ("soap_final.md", "soap_initial.md"):
         gold = sample_dir / fname
         if gold.exists():
@@ -251,31 +255,45 @@ def get_reference_text(sample_dir: Path) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def discover_eval_samples() -> list[dict]:
-    """Find all audio samples with a gold note for evaluation."""
+    """Find all audio samples with a gold note for evaluation.
+
+    Walks: ai-scribe-data/<mode>/<physician>/<encounter>/
+    """
     samples = []
-    for mode, audio_name, subdir in [
-        ("dictation", "dictation.mp3", "dictation"),
-        ("ambient",   "conversation.mp3", "conversations"),
-    ]:
-        data_base = DATA_DIR / subdir
-        if not data_base.exists():
+    _audio_names = {
+        "dictation": ["dictation.mp3"],
+        "conversation": ["conversation_audio.mp3", "note_audio.mp3"],
+    }
+    for mode in ("dictation", "conversation"):
+        mode_dir = DATA_DIR / mode
+        if not mode_dir.exists():
             continue
-        for sample_dir in sorted(data_base.iterdir()):
-            if not sample_dir.is_dir():
+        display_mode = "dictation" if mode == "dictation" else "ambient"
+        for physician_dir in sorted(mode_dir.iterdir()):
+            if not physician_dir.is_dir():
                 continue
-            audio = sample_dir / audio_name
-            if not audio.exists():
-                continue
-            ref = get_reference_text(sample_dir)
-            if len(ref) < 50:
-                continue
-            samples.append({
-                "sample_id": sample_dir.name,
-                "mode": mode,
-                "audio_path": str(audio),
-                "sample_dir": sample_dir,
-                "ref_text": ref,
-            })
+            for sample_dir in sorted(physician_dir.iterdir()):
+                if not sample_dir.is_dir():
+                    continue
+                # Find audio file
+                audio = None
+                for name in _audio_names[mode]:
+                    candidate = sample_dir / name
+                    if candidate.exists():
+                        audio = candidate
+                        break
+                if audio is None:
+                    continue
+                ref = get_reference_text(sample_dir)
+                if len(ref) < 50:
+                    continue
+                samples.append({
+                    "sample_id": sample_dir.name,
+                    "mode": display_mode,
+                    "audio_path": str(audio),
+                    "sample_dir": sample_dir,
+                    "ref_text": ref,
+                })
     return samples
 
 

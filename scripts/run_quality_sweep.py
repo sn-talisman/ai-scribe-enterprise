@@ -5,12 +5,15 @@ Run quality evaluation sweep across all pipeline output samples.
 For each sample that has a generated note + gold standard:
   1. Score with LLM-as-judge (6 dimensions)
   2. Extract and compare facts (medications, diagnoses, findings, plan)
-  3. Write quality_report_v{N}.md to output/<mode>/<sample_id>/
-  4. Write aggregate quality_report_v{N}.md to output/
+  3. Write aggregate quality_report_v{N}.md to output/
+
+Data layout:
+  ai-scribe-data/<mode>/<physician>/<encounter>/final_soap_note.md  (gold)
+  output/<mode>/<physician>/<encounter>/generated_note_v{N}.md      (generated)
 
 Usage:
-    python scripts/run_quality_sweep.py --version v2
-    python scripts/run_quality_sweep.py --version v1 --no-fact-check   # faster
+    python scripts/run_quality_sweep.py --version v7
+    python scripts/run_quality_sweep.py --version v7 --judge-model llama3.1:latest
 """
 
 from __future__ import annotations
@@ -23,35 +26,44 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 _OUTPUT_DIR = Path("output")
-_DATA_MODES = [("dictation", "soap_final.md"), ("conversations", "soap_initial.md")]
+_DATA_ROOT = Path("ai-scribe-data")
+_MODES = ("conversation", "dictation")
+_GOLD_NAME = "final_soap_note.md"
 
 
-def _collect_samples(version: str) -> list[tuple[str, str, Path, Path]]:
-    """Return (mode, sample_id, generated_note_path, gold_path) for evaluatable samples."""
+def _collect_samples(version: str) -> list[tuple[str, str, str, Path, Path]]:
+    """
+    Return (mode, physician, sample_id, generated_note_path, gold_path)
+    for all samples that have both a generated note and a gold standard.
+    """
     samples = []
-    for mode, gold_name in _DATA_MODES:
-        data_dir = Path("data") / mode
-        out_dir = _OUTPUT_DIR / mode
-        if not out_dir.exists():
+    for mode in _MODES:
+        out_mode_dir = _OUTPUT_DIR / mode
+        data_mode_dir = _DATA_ROOT / mode
+        if not out_mode_dir.exists():
             continue
-        for sample_dir in sorted(out_dir.iterdir()):
-            if not sample_dir.is_dir():
+        for physician_dir in sorted(out_mode_dir.iterdir()):
+            if not physician_dir.is_dir():
                 continue
-            sample_id = sample_dir.name
-            note_path = sample_dir / f"generated_note_{version}.md"
-            gold_path = Path("data") / mode / sample_id / gold_name
-            if note_path.exists() and gold_path.exists():
-                samples.append((mode, sample_id, note_path, gold_path))
+            physician = physician_dir.name
+            for encounter_dir in sorted(physician_dir.iterdir()):
+                if not encounter_dir.is_dir():
+                    continue
+                sample_id = encounter_dir.name
+                note_path = encounter_dir / f"generated_note_{version}.md"
+                gold_path = data_mode_dir / physician / sample_id / _GOLD_NAME
+                if note_path.exists() and gold_path.exists():
+                    samples.append((mode, physician, sample_id, note_path, gold_path))
     return samples
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--version", default="v2", help="Pipeline version to evaluate")
+    parser.add_argument("--version", default="v7", help="Pipeline version to evaluate")
     parser.add_argument("--no-fact-check", action="store_true", help="Skip fact extraction (faster)")
     parser.add_argument("--output-dir", default="output")
     parser.add_argument("--judge-model", default=None,
-                        help="Ollama model to use as LLM judge (default: auto-discover first available)")
+                        help="Ollama model to use as LLM judge (default: auto-discover)")
     args = parser.parse_args()
 
     samples = _collect_samples(args.version)
@@ -68,9 +80,9 @@ def main() -> None:
         try:
             resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
             models = resp.json().get("models", [])
-            model = models[0]["name"] if models else "qwen2.5:32b"
+            model = models[0]["name"] if models else "qwen2.5:14b"
         except Exception:
-            model = "qwen2.5:32b"
+            model = "qwen2.5:14b"
 
     from mcp_servers.llm.ollama_server import OllamaServer
     engine = OllamaServer(model_overrides={"command_parse": model, "note_generation": model})
@@ -84,17 +96,17 @@ def main() -> None:
     results = []
     out_dir = Path(args.output_dir)
 
-    for i, (mode, sample_id, note_path, gold_path) in enumerate(samples, 1):
-        print(f"[{i}/{len(samples)}] {sample_id} ({mode}) ... ", end="", flush=True)
+    for i, (mode, physician, sample_id, note_path, gold_path) in enumerate(samples, 1):
+        display_mode = "ambient" if mode == "conversation" else "dictation"
+        print(f"[{i}/{len(samples)}] {sample_id} ({display_mode}, {physician}) ... ", end="", flush=True)
         generated = note_path.read_text()
         gold = gold_path.read_text()
 
-        # Read transcript if available (from comparison file)
+        # Read transcript if available
         transcript = ""
         comparison_path = note_path.parent / f"comparison_{args.version}.md"
         if comparison_path.exists():
             comp_text = comparison_path.read_text()
-            # Extract transcript from collapsed section
             if "<summary>Transcript" in comp_text:
                 parts = comp_text.split("</summary>")
                 if len(parts) > 1:
@@ -109,9 +121,6 @@ def main() -> None:
                 version=args.version,
             )
             results.append(result)
-
-            # Per-sample quality reports are written to the aggregate output dir only.
-            # (output/<mode>/<sample_id>/ contains only generated_note and comparison)
 
             fc_str = ""
             if result.fact_check:
@@ -162,7 +171,7 @@ def main() -> None:
             )
             print(f"Quality scores updated for provider: {provider_id}")
 
-    print(f"\nPer-sample files: output/{{dictation,conversations}}/<sample_id>/generated_note_{args.version}.md + comparison_{args.version}.md")
+    print(f"\nPer-sample files: output/{{conversation,dictation}}/<physician>/<encounter>/")
 
 
 if __name__ == "__main__":

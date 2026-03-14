@@ -80,7 +80,7 @@ export default function DashboardCharts({ trend, dimensions }: Props) {
       {/* Dimension radar */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
         <h2 className="text-sm font-semibold text-gray-800 mb-4">
-          Dimension Breakdown (v4)
+          Dimension Breakdown (v7)
         </h2>
         <ResponsiveContainer width="100%" height={220}>
           <RadarChart

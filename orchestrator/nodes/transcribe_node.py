@@ -178,6 +178,61 @@ def _score_asr_confidence(transcript: UnifiedTranscript) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dual-audio transcript merging
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _merge_transcripts(
+    conversation: UnifiedTranscript,
+    note_dictation: UnifiedTranscript,
+) -> UnifiedTranscript:
+    """
+    Merge a conversation transcript (multi-speaker ambient) with a
+    physician note dictation transcript (single-speaker).
+
+    The note dictation segments are appended after the conversation segments
+    with a separator marker so the LLM can distinguish the two sources.
+    Timestamps on the dictation segments are offset past the conversation end.
+    """
+    conv_end_ms = max(
+        (s.end_ms for s in conversation.segments), default=0
+    )
+    # Offset dictation segments so they don't overlap with conversation timestamps
+    gap_ms = 1000  # 1s gap marker
+    offset = conv_end_ms + gap_ms
+
+    shifted_segments: list[TranscriptSegment] = []
+    for seg in note_dictation.segments:
+        shifted = seg.model_copy(update={
+            "start_ms": seg.start_ms + offset,
+            "end_ms": seg.end_ms + offset,
+            "speaker": "PHYSICIAN_DICTATION",
+            "source": "asr_note_dictation",
+        })
+        shifted_segments.append(shifted)
+
+    all_segments = list(conversation.segments) + shifted_segments
+
+    # Build merged full_text with a clear separator
+    separator = "\n\n--- PHYSICIAN NOTE DICTATION ---\n\n"
+    merged_text = conversation.full_text.rstrip()
+    if note_dictation.full_text.strip():
+        merged_text += separator + note_dictation.full_text.strip()
+
+    total_duration = max(
+        conversation.audio_duration_ms,
+        offset + note_dictation.audio_duration_ms,
+    )
+
+    return UnifiedTranscript(
+        segments=all_segments,
+        engine_used=conversation.engine_used,
+        diarization_engine=conversation.diarization_engine,
+        audio_duration_ms=total_duration,
+        full_text=merged_text,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Node entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -259,7 +314,7 @@ def transcribe_node(state: EncounterState) -> dict:
         condition_on_previous_text=condition_on_previous,
     )
 
-    # ── Transcribe ────────────────────────────────────────────────────────
+    # ── Transcribe primary audio ────────────────────────────────────────
     try:
         engine = _get_asr_engine(provider_id)
         logger.info("transcribe_node: calling %s on %s", engine.name, audio_path,
@@ -275,6 +330,42 @@ def transcribe_node(state: EncounterState) -> dict:
                      extra={"encounter_id": state.encounter_id})
         errors.append(f"transcribe_node: {type(exc).__name__}: {exc}")
         return _fallback_result(state, errors, t0, "asr_error")
+
+    # ── Transcribe note dictation audio (conversation mode dual-audio) ──
+    if state.note_audio_file_path:
+        try:
+            note_cfg = ASRConfig(
+                language="en",
+                diarize=False,
+                max_speakers=1,
+                custom_vocabulary=custom_vocab,
+                hotwords=custom_vocab[:100],
+                initial_prompt=initial_prompt,
+                condition_on_previous_text=True,
+            )
+            logger.info(
+                "transcribe_node: transcribing note_audio %s",
+                state.note_audio_file_path,
+                extra={"encounter_id": state.encounter_id},
+            )
+            note_engine = _get_asr_engine(provider_id)
+            note_raw: RawTranscript = note_engine.transcribe_batch_sync(
+                state.note_audio_file_path, note_cfg,
+            )
+            note_transcript = _raw_to_unified(note_raw, RecordingMode.DICTATION)
+            transcript = _merge_transcripts(transcript, note_transcript)
+            logger.info(
+                "transcribe_node: merged note_audio — %d total segs",
+                len(transcript.segments),
+                extra={"encounter_id": state.encounter_id},
+            )
+        except Exception as exc:
+            logger.warning(
+                "transcribe_node: note_audio ASR failed (%s), continuing with primary only",
+                exc,
+                extra={"encounter_id": state.encounter_id},
+            )
+            errors.append(f"transcribe_node: note_audio failed: {exc}")
 
     # ── Post-process ──────────────────────────────────────────────────────
     pp_mode = state.provider_profile.postprocessor_mode

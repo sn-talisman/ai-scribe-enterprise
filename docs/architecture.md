@@ -1049,7 +1049,265 @@ SESSION 6:  Next.js web app — recording UI + review/edit UI
 SESSION 7:  End-to-end integration: capture → transcribe → note → review
 SESSION 8:  Provider profiles + template engine
 SESSION 9:  Browser extension (Super Fill MVP)
-SESSION 10: Offline buffering + sync engine
-SESSION 11: Evidence-linked citations (audio indexer + playback)
-SESSION 12: Learning service (correction capture + training pair generation)
+SESSION 10: ASR quality improvement + physician-specific fine-tuning
+SESSION 11: Onboard new practice types, templates, and providers (admin UX)
+SESSION 12: On-demand note generation + live dictation capture
+SESSION 13: iPhone and Android application (React Native)
+SESSION 14: Learning service (correction capture + training pair generation)
+SESSION 15: S3 trigger pipeline (production ingestion)
+SESSION 16: Evidence-linked citations (audio indexer + playback)
+SESSION 17: Browser extension (Super Fill MVP)
+SESSION 18+: Advanced features (coding, patient summaries, voice commands)
 ```
+
+---
+
+## 15. Onboarding Procedures
+
+This section documents how to add new physicians, templates, specialties, and medical dictionaries to the platform.
+
+### 15.1 Onboarding a New Physician
+
+A physician is represented by a **provider profile** YAML file in `config/providers/`. The profile controls template selection, custom vocabulary, style directives, and quality tracking.
+
+**Step 1: Create the provider profile.**
+
+Create `config/providers/{provider_id}.yaml` using the naming convention `dr_firstname_lastname`:
+
+```yaml
+# config/providers/dr_jane_smith.yaml
+asr_override: null
+correction_count: 0
+credentials: MD                    # MD, DO, DC, NP, PA, etc.
+custom_vocabulary:                 # Provider-specific medical terms
+- Excelsia                         # Practice name
+- terminology_specific_to_this_doctor
+id: dr_jane_smith                  # Must match filename (without .yaml)
+llm_override: null                 # Override default LLM model (null = use default)
+name: Dr. Jane Smith
+noise_suppression_level: moderate  # off | mild | moderate | aggressive
+note_format: SOAP
+npi: ''
+postprocessor_mode: hybrid         # hybrid | rules_only | ml_only
+practice_id: excelsia_injury_care
+quality_history: []                # Auto-populated by quality sweeps
+quality_scores: {}                 # Auto-populated by quality sweeps
+specialty: orthopedic              # Must match a specialty with templates
+style_directives:                  # LLM prompt injections for note style
+- Write in third person
+- Use past tense for examination findings
+- List diagnoses as numbered items
+- Mirror Assessment numbering in the Plan
+style_model_version: v0
+template_routing:                  # visit_type → template_id mapping
+  default: ortho_follow_up         # Fallback when visit_type is unknown
+  follow_up: ortho_follow_up
+  initial: ortho_initial_eval
+  initial_evaluation: ortho_initial_eval
+  assume_care: ortho_initial_eval
+  discharge: ortho_follow_up
+```
+
+**Step 2: Verify template routing.**
+
+The `template_routing` table maps encounter `visit_type` values to template filenames (without `.yaml`). The resolution chain is:
+
+1. `encounter_details.json` → `visit_type` field (e.g., `"initial"`, `"follow_up"`)
+2. `provider_manager.resolve_template(provider_id, visit_type)` → looks up `template_routing[visit_type]`
+3. If no match → uses `template_routing["default"]`
+4. If no provider profile exists → falls back to `"soap_default"`
+5. Template loader: tries exact filename match in `config/templates/` first, then `{specialty}_{visit_type}` pattern
+
+**Step 3: Add sample data (optional but recommended).**
+
+Place audio and gold-standard notes in the data directory:
+```
+ai-scribe-data/{mode}/{provider_id}/{patient_name}_{encounter_id}_{date}/
+├── audio.mp3                    # Primary audio (dictation or conversation)
+├── note_audio.mp3               # Optional: physician's post-encounter dictation (conversation mode only)
+├── encounter_details.json       # Encounter metadata (visit_type, dates, location)
+└── final_soap_note.md           # Gold-standard clinical note for quality evaluation
+```
+
+**Step 4: Run the pipeline and evaluate quality.**
+
+```bash
+source .venv/bin/activate
+# ASR pass (GPU)
+python scripts/batch_eval.py --two-pass --version v8 --data-dir ai-scribe-data
+# Quality sweep (uses LLM-as-judge)
+python scripts/run_quality_sweep.py --version v8 --judge-model llama3.1:latest
+```
+
+Quality scores are automatically written back to the provider's `quality_history` and `quality_scores` fields.
+
+### 15.2 Adding a New Template
+
+Templates define the section structure and formatting rules for clinical notes. Each template is a YAML file in `config/templates/`.
+
+**Step 1: Create the template file.**
+
+```yaml
+# config/templates/{specialty}_{visit_type}.yaml
+name: "Specialty Visit Type"        # Human-readable name
+specialty: specialty_name           # e.g., orthopedic, chiropractic, neurology
+visit_type: visit_type_name         # e.g., first_visit, follow_up, initial_eval
+
+header_fields:                      # Demographic fields for the note header
+  - patient_name
+  - date_of_birth
+  - date_of_service
+  - date_of_injury
+  - provider_name
+  - location
+
+sections:                           # Ordered list of note sections
+  - id: section_id                  # Unique identifier (snake_case)
+    label: "SECTION LABEL"          # Display name in the generated note
+    required: true                  # Whether the LLM must generate this section
+    prompt_hint: "Guidance for LLM"  # Tells the LLM what to include
+
+formatting:
+  voice: active                     # active | passive
+  tense: past                       # past | present
+  person: third                     # first | third
+  abbreviations: spell_out          # spell_out | allow
+  measurements: include_units       # include_units | omit_units
+```
+
+**Step 2: Wire the template to providers.**
+
+Add the template filename (without `.yaml`) to the provider's `template_routing` in their profile YAML:
+
+```yaml
+template_routing:
+  initial: my_new_template          # Maps visit_type "initial" to this template
+```
+
+**Naming convention:** `{specialty}_{visit_type}.yaml` — e.g., `ortho_follow_up.yaml`, `neuro_initial_eval.yaml`, `chiro_follow_up.yaml`.
+
+**Available templates (current):**
+
+| Template | Specialty | Visit Type | Sections |
+|----------|-----------|------------|----------|
+| `soap_default` | Generic | Any | 4 (CC, HPI, PE, Assessment/Plan) |
+| `ortho_initial_eval` | Orthopedic | Initial | 12 (CC through Plan + Addendum) |
+| `ortho_follow_up` | Orthopedic | Follow-up | 6 (HPI through Plan) |
+| `chiro_initial_eval` | Chiropractic | Initial | 11 (CC through Plan) |
+| `chiro_follow_up` | Chiropractic | Follow-up | 4 (HPI, PE, Assessment, Plan) |
+| `neuro_initial_eval` | Neurology | Initial | 8 (HPI through Plan) |
+| `neuro_follow_up` | Neurology | Follow-up | 6 (HPI through Plan) |
+
+### 15.3 Adding a New Specialty
+
+A specialty is not a separate entity — it is the combination of templates + dictionaries + provider profiles that share a `specialty` field.
+
+**Step 1: Create specialty templates.**
+
+Create at least two templates: `{specialty}_initial_eval.yaml` and `{specialty}_follow_up.yaml`. Analyze gold-standard notes from providers of this specialty to determine the correct section structure.
+
+**Step 2: Create a specialty dictionary.**
+
+Create `config/dictionaries/{specialty}.txt` — one term per line. This dictionary is loaded into:
+- The LLM prompt (vocabulary context block)
+- The ASR engine (hotword boosting)
+- The post-processor (medical spell-check)
+
+Sources for building specialty dictionaries:
+1. Mine gold-standard notes for specialty-specific terms not in the base 98K dictionary
+2. Use the LLM to generate comprehensive term lists: `"List 200 medical terms specific to {specialty} including anatomy, procedures, diagnoses, medications, and instruments"`
+3. Supplement from public medical terminology databases (UMLS, SNOMED CT)
+
+**Step 3: Create provider profiles.**
+
+Create `config/providers/{provider_id}.yaml` for each physician in this specialty with `specialty: {specialty_name}` and appropriate `template_routing`.
+
+### 15.4 Medical Dictionary Management
+
+The dictionary system has three tiers:
+
+```
+config/dictionaries/
+├── base_medical.txt              # 98K OpenMedSpel (shared across all specialties)
+├── orthopedic.txt                # Specialty-specific terms
+├── chiropractic.txt
+├── neurology.txt
+├── ...
+└── custom/
+    └── {provider_id}.txt         # Provider-specific terms (e.g., clinic names, unique procedures)
+```
+
+**Loading order:** base → specialty → provider custom. All three are merged and deduplicated at runtime.
+
+**Adding terms:** Edit the relevant file directly. Terms are loaded fresh on each pipeline run (no restart required).
+
+**Provider custom vocabulary:** Also stored in the provider profile YAML (`custom_vocabulary` field). These terms are:
+- Injected into the LLM prompt as a vocabulary context block
+- Used as ASR hotwords for logit boosting during transcription
+- Added to the post-processor dictionary for spell-checking
+
+### 15.5 Template Selection Chain (Full Resolution)
+
+The complete template resolution flow for any encounter:
+
+```
+1. Encounter starts with: provider_id + visit_type (from encounter_details.json or API request)
+      │
+2. ProviderManager.resolve_template(provider_id, visit_type)
+      │
+      ├── Provider YAML exists?
+      │     ├── YES → template_routing[visit_type] exists?
+      │     │           ├── YES → return template_id (e.g., "ortho_follow_up")
+      │     │           └── NO  → template_routing["default"] exists?
+      │     │                       ├── YES → return default template_id
+      │     │                       └── NO  → return "soap_default"
+      │     └── NO  → return "soap_default"
+      │
+3. TemplateServer.load_template(template_id)
+      │
+      ├── Exact file match: config/templates/{template_id}.yaml?
+      │     ├── YES → return template
+      │     └── NO  → Fallback: config/templates/soap_default.yaml
+      │
+4. Template sections + formatting rules → injected into LLM prompt
+```
+
+### 15.6 Golden Source (Gold Standard) Availability
+
+Quality evaluation compares generated notes against a **golden source** (`final_soap_note.md`). The availability of this reference varies by encounter origin:
+
+| Origin | Golden Source Available? | Quality Scoring |
+|--------|------------------------|-----------------|
+| Historical batch data | Yes — provided with dataset | Full scoring (6 dimensions + fact check) |
+| Live recording (Capture/mobile) | No — not at creation time | Skipped until note finalized |
+| After provider finalization | Yes — finalized note becomes gold | Retroactive scoring possible |
+
+**Live encounter lifecycle:**
+1. Provider records audio → pipeline generates transcript + note (no gold standard)
+2. Provider reviews and edits the generated note
+3. Finalized note is saved as `final_soap_note.md` in the encounter folder
+4. Quality evaluation can now run retroactively against the finalized note
+5. Provider corrections (diff: AI output → finalized) feed the learning loop (Session 14)
+
+This design ensures the quality framework scales naturally: historical data provides immediate benchmarks, while live encounters build gold standards over time through clinical use.
+
+### 15.7 On-Demand Pipeline Re-run
+
+Any existing sample can be re-processed via `POST /encounters/{sample_id}/rerun`:
+
+- Auto-detects next version number from existing `generated_note_v*.md` files
+- Re-uses original audio from `ai-scribe-data/` (no re-upload needed)
+- Saves output as `generated_note_v{N+1}.md` and `audio_transcript_v{N+1}.txt`
+- WebSocket progress events sent in real-time
+- New version appears in the sample detail page version selector
+- Version discovery is dynamic — `api/data_loader.py` scans for all `v*` files rather than a hardcoded list
+
+### 15.8 Test Patient Data
+
+The stub EHR roster (`config/ehr_stub/patient_roster.json`) contains ~20 dummy patients for development and testing:
+
+- All test patients have `_TEST` suffix in their last name (e.g., "Dotson_TEST", "Queen_TEST")
+- When a test patient encounter is created, the folder name contains `_test` (e.g., `james_dotson_test_abc12345_2026-03-14/`)
+- Test encounters are stored in the standard `ai-scribe-data/` and `output/` directories alongside real data
+- Test encounters are fully processed by the pipeline and appear in the Samples list
+- The `_TEST` suffix makes test data easy to identify and filter in both the UI and the file system

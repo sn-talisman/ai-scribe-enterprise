@@ -127,7 +127,9 @@ diffable, and directly comparable with the gold standard documents.
 - `v3` = Session 7 (full patient context + demographics) — 4.34/5.0
 - `v4` = Session 8 (provider profiles + vocab + style directives) — 4.38/5.0
 - `v5` = Session 10 (ASR inference knobs wired) — 4.35/5.0
-- `v6` = Post-session model upgrade (qwen2.5:14b) — **4.44/5.0** ← current
+- `v6` = Post-session model upgrade (qwen2.5:14b) — **4.44/5.0**
+- `v7` = Dual-audio conversation processing — 4.31/5.0 (61 samples incl. new providers)
+- `v8` = Multi-provider templates + profiles (chiro, neuro, ortho) — **4.35/5.0** (61 samples, 5 providers) ← current
 
 Each version shows measurable improvement. Quality judged by llama3.1:latest as consistent cross-model evaluator.
 
@@ -915,7 +917,162 @@ version-comparison capabilities to the web UI.
 - Compare Versions tab: dual version pickers + LCS-based line diff (green/red/gray)
 - Architecture diagram: `scripts/generate_architecture_diagram.py` → `docs/images/architecture_diagram.png`
 
-### Session 11: Learning Loop + Correction Capture
+### Session 11: Onboard New Practice Types, Templates, and Providers
+This session adds admin-facing UX for managing specialties, templates, and providers — making the platform self-service for onboarding without config file edits.
+
+**a. Specialty Management**
+- Add "Specialties" link to left navigation sidebar
+- Specialties list page: shows all supported specialty types (orthopedic, chiropractic, neurology, etc.)
+- Specialty detail page: read-only view of the keyword dictionary associated with that specialty (`config/dictionaries/{specialty}.txt`)
+- Inline editing: toggle to edit the dictionary directly in the browser (saves back to the dictionary file)
+- Add new specialty: form to create a new specialty — user can enter keywords manually or upload a `.txt` file
+- Backend API: `GET/POST/PUT /specialties`, `GET/PUT /specialties/{id}/dictionary`
+- Creating a specialty creates the dictionary file in `config/dictionaries/`
+
+**b. Template Management**
+- Add "Templates" link to left navigation sidebar
+- Templates list page: shows all templates with attributes (specialty, visit type, associated providers)
+- Template detail: shows sections, formatting rules, and which providers use this template
+- Create template form: select specialty (dropdown), visit type, and define header/section list
+  - Section list builder: add/remove/reorder sections, each with id, label, required flag, and prompt hint
+  - Available section types pre-populated from existing templates (e.g., chief_complaint, history_of_present_illness, physical_examination, assessment, plan, etc.)
+- Backend API: `GET/POST/PUT/DELETE /templates`
+- Templates saved as YAML files in `config/templates/`
+
+**c. Provider Onboarding & Editing**
+- Update existing Provider detail page (`/providers/[id]`) to include an "Edit" button for editing provider attributes:
+  - Specialty (dropdown — only lists currently supported specialties)
+  - Template routing (dropdowns filtered to templates matching the provider's specialty)
+  - Custom vocabulary (editable list)
+  - Style directives (editable list)
+  - Credentials, noise suppression level, practice ID
+- Add "New Provider" panel on the Providers list page (`/providers`)
+  - Name, credentials, specialty (dropdown of existing specialties)
+  - Template mapping: dropdowns filtered to templates available for selected specialty
+  - Data directory location (file path for physician-specific data files)
+  - Future features noted: LoRA fine-tuning trigger, correction history, quality threshold alerts
+- Backend API: `GET/POST/PUT /providers`
+- Provider profiles saved as YAML in `config/providers/`
+
+**d. Data Consistency Enforcement**
+- Audit all existing specialties, templates, and providers for consistency:
+  - Every template must reference a valid specialty that has a dictionary
+  - Every provider must map to templates that match their specialty
+  - Fix inconsistencies (e.g., "chiropractic" specialty exists in templates but missing from `config/dictionaries/`)
+- Create missing dictionary files
+- Add validation in the API: reject template/provider creation that violates specialty constraints
+
+### Session 12: On-Demand Note Generation
+This session adds the ability to trigger the transcription and note generation pipeline on demand from the UI, with asynchronous notification of completion.
+
+**a. Backend On-Demand Pipeline**
+- `POST /encounters` — create encounter + trigger pipeline asynchronously
+- `POST /encounters/{id}/upload` — upload audio, triggers pipeline via `asyncio.create_task`
+- Pipeline status tracked in encounter state: `pending → processing → complete | error`
+- WebSocket notifications (`WS /ws/encounters/{id}`): emits events at each node transition and on completion
+- No polling required — client subscribes to WS channel and receives push notifications
+- Auto-generates encounter folder in `ai-scribe-data/{mode}/{provider_id}/{patient_name}_{encounter_id}_{date}/` with:
+  - Audio file (uploaded or recorded)
+  - `patient_demographics.json` — generated from patient selection (name, DOB, sex, MRN)
+  - `encounter_details.json` — generated from form inputs (provider_id, visit_type, date_of_service, mode)
+- Folder creation + file placement is sufficient to trigger the pipeline — same path as batch processing
+
+**b. Patient Selection via EHR**
+- **Patient search dropdown** (searchable, typeahead): provider selects an existing patient before recording
+  - Searches by name, MRN, or DOB
+  - Returns patient demographics (name, DOB, sex, MRN) and recent encounter history
+  - Data source: EHR MCP server (`mcp_servers/ehr/stub_server.py`)
+  - Dropdown populates on focus with default patient list (no typing required)
+- **Stub EHR patient roster**: `StubEHRServer.search_patients(query)` returns dummy patient data
+  - Pre-populated with ~20 dummy patients per practice (realistic names, MRNs, demographics)
+  - Stored in `config/ehr_stub/patient_roster.json`
+  - **Test patients**: all stub patients are tagged with `_TEST` suffix in last name (e.g., "Dotson_TEST") for clear identification
+  - Test patient encounters create folders with `_test` in the name, routed to standard `ai-scribe-data/` and `output/` directories
+  - Future: replaced by live EHR integration (FHIR R4, HL7) — same interface, zero pipeline changes
+- API endpoint: `GET /patients/search?q={query}&provider_id={id}` — returns matching patients (empty query returns first 10)
+- After patient is selected, their demographics auto-populate `patient_demographics.json`
+
+**c. Frontend Capture Page**
+- Change "Upload" nav item to "Capture" (renamed)
+- Capture page flow:
+  1. **Provider selector**: dropdown showing provider name with specialty (e.g., "Dr. Rahman (Orthopedic)")
+  2. **Patient selector**: searchable dropdown — typeahead queries `GET /patients/search`; shows name, DOB, MRN
+  3. **Visit type selector**: initial, follow_up, assume_care, discharge
+  4. **Audio input** (two modes):
+     - **Upload**: drag-and-drop zone for MP3/WAV/M4A files
+     - **Live dictation**: browser-based audio recording (MediaRecorder API) — record, pause, stop, submit
+- After submission:
+  - Backend creates encounter folder in `ai-scribe-data/` with audio + `patient_demographics.json` + `encounter_details.json`
+  - Pipeline triggers automatically
+  - Sample appears in Samples list with status "Processing" (animated indicator)
+  - When WS notification arrives with completion, status changes to "Complete"
+  - Transcript and note become viewable immediately
+- Sample detail page shows pipeline progress during processing (step indicator: Transcribe → Generate → Review)
+
+**d. Golden Source Handling for Live Encounters**
+- Live-recorded encounters do **NOT** have a golden source (gold-standard note) at creation time
+- Pipeline runs without quality evaluation — transcript and note are generated, but no comparison or quality score is computed
+- Quality report is omitted (or marked "N/A — no gold standard available")
+- **Future workflow**: after the provider reviews and finalizes the generated note, the finalized note becomes the golden source
+  - Finalized note is saved as `final_soap_note.md` in the encounter folder
+  - Quality evaluation can then be run retroactively against the finalized note
+  - This creates a feedback loop: each finalized note improves the quality baseline
+  - See Session 14 (Learning Loop + Correction Capture) for the correction-driven improvement cycle
+
+**e. On-Demand Re-run from Samples Page**
+- Any existing sample can be re-run on demand via `POST /encounters/{sample_id}/rerun`
+- Auto-detects next version number by scanning existing `generated_note_v*.md` files in the sample's output directory
+- Re-uses the original audio file from `ai-scribe-data/`; no re-upload required
+- Pipeline runs asynchronously with WebSocket progress events (same as new encounters)
+- Output saved as `generated_note_v{N+1}.md` and `audio_transcript_v{N+1}.txt`
+- New version appears in the sample detail page version selector after completion
+- UI: "Re-run Pipeline" button on each sample detail page header
+- Dynamic version discovery: `api/data_loader.py` scans output/ for all version numbers (no hardcoded version list)
+
+**f. Batch Run Support**
+- Existing batch pipeline (`scripts/batch_eval.py`) continues to work for bulk processing
+- On-demand is for individual encounters triggered from the UI
+- Both paths use the same underlying pipeline code
+
+### Session 13: iPhone and Android Application
+This session builds a cross-platform mobile application for AI Scribe using React Native (or Expo), providing core functionality on both iOS and Android.
+
+**a. Application Design**
+- App name: "AI Scribe" with Talisman Solutions logo
+- Cross-platform: React Native / Expo for iOS and Android feature parity
+- Connects to the same FastAPI backend as the web app
+- Authentication: JWT token-based (same as web API)
+- Designed for future extensibility: modular navigation, theme system, offline-first architecture
+
+**b. Core Features**
+- **Audio recording**: Record audio directly from the mobile device (microphone capture)
+  - Start/stop/pause recording controls
+  - Visual audio waveform during recording
+  - Provider and visit type selection before recording
+  - On recording completion: triggers on-demand note generation pipeline (Session 12 API)
+- **Transcript & note viewer**: View latest transcripts and clinical notes filtered by provider
+  - List view: recent encounters with provider, date, status, quality score
+  - Detail view: rendered clinical note with section headers
+  - No version history required (latest version only)
+- **Status tracking**: Shows pipeline status (Processing → Complete) with push notifications
+- **Provider selector**: Filter encounters by provider
+
+**c. Architecture**
+- Shared component library between iOS and Android
+- API client: typed SDK matching the web `lib/api.ts` interface
+- State management: React Context or Zustand for session state
+- Audio: `expo-av` for cross-platform audio recording
+- Notifications: push notifications via Firebase Cloud Messaging (FCM) for pipeline completion
+- Offline: audio files cached locally (AsyncStorage) and uploaded when connectivity is restored
+
+**d. Future Mobile Features (documented, not implemented)**
+- Live streaming transcription (NeMo Streaming ASR via WebSocket)
+- Voice commands ("new section", "assessment")
+- Offline-first full pipeline execution (on-device models)
+- Biometric authentication (Face ID / fingerprint)
+- EHR integration via mobile deep links
+
+### Session 14: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
 - Classify corrections (ASR_ERROR, STYLE, CONTENT, CODING, TEMPLATE)
 - Generate training pairs for post-processor ML model
@@ -923,7 +1080,7 @@ version-comparison capabilities to the web UI.
 - Feed quality evaluator with real correction data
 - Trigger ASR re-fine-tuning when enough new corrected transcripts accumulate (see Session 10f)
 
-### Session 12: S3 Trigger Pipeline (Production Ingestion)
+### Session 15: S3 Trigger Pipeline (Production Ingestion)
 - Implement S3 upload watcher: audio files uploaded to designated S3 bucket trigger pipeline
 - EventBridge rule: S3 PutObject → invoke pipeline Lambda/container
 - Pipeline reads audio from S3, processes through full graph, writes output `.md` back to S3
@@ -945,17 +1102,16 @@ version-comparison capabilities to the web UI.
 - Implement `trigger/s3_handler.py` — the entry point invoked by EventBridge
 - All output files are Markdown, consistent with local pipeline output format
 
-### Session 13: Evidence-Linked Citations + Audio Recording UI
+### Session 16: Evidence-Linked Citations + Audio Recording UI
 - Audio indexer: word-level timestamp mapping for citation links
 - Citation metadata embedded in note Markdown (link note sentences → audio timestamps)
-- Add live audio recording to web UI (Session 9 deferred this): WebRTC capture → stream to backend → live transcription via NeMo streaming ASR
 - Offline audio buffering strategy for client-side capture (IndexedDB ring buffer)
 
-### Session 14: Browser Extension (Super Fill MVP)
+### Session 17: Browser Extension (Super Fill MVP)
 - Chrome MV3 extension scaffold
 - EHR detection, field mapping, note injection
 
-### Sessions 15+: Advanced features (coding suggestions, patient summaries, voice commands, mobile app)
+### Sessions 18+: Advanced features (coding suggestions, patient summaries, voice commands)
 
 ## Coding Standards
 

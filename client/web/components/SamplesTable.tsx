@@ -5,18 +5,93 @@ import Link from "next/link";
 import type { SampleSummary } from "@/lib/api";
 import ScoreBadge from "./ScoreBadge";
 
+type SortKey = "id" | "patient" | "provider" | "mode" | "score" | "accuracy" | "completeness" | "no_hallucination" | "structure";
+type SortDir = "asc" | "desc";
+
+/** Extract patient name from sample_id: "jane_doe_123456_20260303" → "Jane Doe" */
+function extractPatientName(sampleId: string): string {
+  // Pattern: name parts followed by numeric ID and date
+  const parts = sampleId.split("_");
+  // Find where the numeric patient ID starts (5-6 digit number)
+  const nameEndIdx = parts.findIndex((p) => /^\d{5,}$/.test(p));
+  if (nameEndIdx <= 0) return sampleId;
+  return parts
+    .slice(0, nameEndIdx)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
+function formatProviderName(physician: string): string {
+  return physician
+    .replace(/^dr_/, "Dr. ")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/^Dr\. /, "Dr. ");
+}
+
 export default function SamplesTable({ samples }: { samples: SampleSummary[] }) {
   const [mode, setMode] = useState<"all" | "dictation" | "ambient">("all");
-  const [sort, setSort] = useState<"id" | "score">("score");
+  const [sortKey, setSortKey] = useState<SortKey>("score");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "id" || key === "patient" || key === "provider" ? "asc" : "desc");
+    }
+  };
 
   const filtered = samples
     .filter((s) => mode === "all" || s.mode === mode)
     .sort((a, b) => {
-      if (sort === "score") {
-        return (b.quality?.overall ?? 0) - (a.quality?.overall ?? 0);
+      let cmp = 0;
+      switch (sortKey) {
+        case "id":
+          cmp = a.sample_id.localeCompare(b.sample_id);
+          break;
+        case "patient":
+          cmp = extractPatientName(a.sample_id).localeCompare(extractPatientName(b.sample_id));
+          break;
+        case "provider":
+          cmp = (a.physician ?? "").localeCompare(b.physician ?? "");
+          break;
+        case "mode":
+          cmp = a.mode.localeCompare(b.mode);
+          break;
+        case "score":
+          cmp = (a.quality?.overall ?? 0) - (b.quality?.overall ?? 0);
+          break;
+        case "accuracy":
+          cmp = (a.quality?.accuracy ?? 0) - (b.quality?.accuracy ?? 0);
+          break;
+        case "completeness":
+          cmp = (a.quality?.completeness ?? 0) - (b.quality?.completeness ?? 0);
+          break;
+        case "no_hallucination":
+          cmp = (a.quality?.no_hallucination ?? 0) - (b.quality?.no_hallucination ?? 0);
+          break;
+        case "structure":
+          cmp = (a.quality?.structure ?? 0) - (b.quality?.structure ?? 0);
+          break;
       }
-      return a.sample_id.localeCompare(b.sample_id);
+      return sortDir === "asc" ? cmp : -cmp;
     });
+
+  const SortHeader = ({ label, col }: { label: string; col: SortKey }) => (
+    <th
+      className="px-4 py-3 font-medium cursor-pointer select-none hover:text-gray-600 transition-colors"
+      onClick={() => handleSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === col && (
+          <span className="text-indigo-500">{sortDir === "asc" ? "↑" : "↓"}</span>
+        )}
+      </span>
+    </th>
+  );
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -36,20 +111,8 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
             {m.charAt(0).toUpperCase() + m.slice(1)}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-2 text-xs text-gray-500">
-          Sort:
-          <button
-            onClick={() => setSort("score")}
-            className={`px-2 py-1 rounded ${sort === "score" ? "text-indigo-600 font-semibold" : ""}`}
-          >
-            Score
-          </button>
-          <button
-            onClick={() => setSort("id")}
-            className={`px-2 py-1 rounded ${sort === "id" ? "text-indigo-600 font-semibold" : ""}`}
-          >
-            ID
-          </button>
+        <div className="ml-auto text-xs text-gray-400">
+          Click column headers to sort
         </div>
       </div>
 
@@ -57,14 +120,15 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-400 border-b border-gray-50">
-              <th className="px-6 py-3 font-medium">Sample ID</th>
-              <th className="px-4 py-3 font-medium">Mode</th>
+              <SortHeader label="Patient" col="patient" />
+              <SortHeader label="Provider" col="provider" />
+              <SortHeader label="Mode" col="mode" />
               <th className="px-4 py-3 font-medium">Versions</th>
-              <th className="px-4 py-3 font-medium">Overall</th>
-              <th className="px-4 py-3 font-medium">Accuracy</th>
-              <th className="px-4 py-3 font-medium">Completeness</th>
-              <th className="px-4 py-3 font-medium">No Halluc.</th>
-              <th className="px-4 py-3 font-medium">Structure</th>
+              <SortHeader label="Overall" col="score" />
+              <SortHeader label="Accuracy" col="accuracy" />
+              <SortHeader label="Completeness" col="completeness" />
+              <SortHeader label="No Halluc." col="no_hallucination" />
+              <SortHeader label="Structure" col="structure" />
               <th className="px-4 py-3 font-medium">Gold</th>
               <th className="px-4 py-3 font-medium"></th>
             </tr>
@@ -75,8 +139,11 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
                 key={s.sample_id}
                 className="border-b border-gray-50 hover:bg-gray-50 transition-colors"
               >
-                <td className="px-6 py-3 font-mono text-xs text-gray-700 max-w-[180px] truncate">
-                  {s.sample_id}
+                <td className="px-4 py-3 text-xs text-gray-800 font-medium max-w-[160px] truncate">
+                  {extractPatientName(s.sample_id)}
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-600 max-w-[140px] truncate">
+                  {formatProviderName(s.physician)}
                 </td>
                 <td className="px-4 py-3">
                   <span
@@ -112,7 +179,7 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
                 </td>
                 <td className="px-4 py-3">
                   {s.has_gold ? (
-                    <span className="text-green-600 text-xs">✓</span>
+                    <span className="text-green-600 text-xs">&#10003;</span>
                   ) : (
                     <span className="text-gray-300 text-xs">—</span>
                   )}
@@ -123,7 +190,7 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
                     className="text-xs font-medium hover:underline"
                     style={{ color: "var(--brand-green)" }}
                   >
-                    View →
+                    View &rarr;
                   </Link>
                 </td>
               </tr>

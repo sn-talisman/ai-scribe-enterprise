@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-DATA_DIR = ROOT / "data"
+DATA_DIR = ROOT / "ai-scribe-data"
 OUTPUT_TRAINING_DIR = ROOT / "data" / "asr_training"
 
 # Filtering thresholds
@@ -316,13 +316,13 @@ def discover_samples(
     mode_config = {
         "dictation": {
             "audio_names": ["dictation.mp3"],
-            "gold_names": ["soap_final.md"],
+            "gold_names": ["final_soap_note.md", "soap_final.md"],
             "data_subdir": DATA_DIR / "dictation",
         },
         "ambient": {
-            "audio_names": ["conversation.mp3"],
-            "gold_names": ["soap_initial.md", "soap_final.md"],
-            "data_subdir": DATA_DIR / "conversations",
+            "audio_names": ["conversation_audio.mp3", "note_audio.mp3"],
+            "gold_names": ["final_soap_note.md", "soap_initial.md", "soap_final.md"],
+            "data_subdir": DATA_DIR / "conversation",
         },
     }
 
@@ -337,33 +337,37 @@ def discover_samples(
             log.warning("Data directory not found: %s — skipping mode '%s'", data_subdir, mode)
             continue
 
-        for sample_dir in sorted(data_subdir.iterdir()):
-            if not sample_dir.is_dir():
+        # Walk nested: data_subdir/<physician>/<encounter>/
+        for physician_dir in sorted(data_subdir.iterdir()):
+            if not physician_dir.is_dir():
                 continue
+            for sample_dir in sorted(physician_dir.iterdir()):
+                if not sample_dir.is_dir():
+                    continue
 
-            audio = None
-            for audio_name in cfg["audio_names"]:
-                candidate = sample_dir / audio_name
-                if candidate.exists():
-                    audio = candidate
-                    break
-            if audio is None:
-                continue
+                audio = None
+                for audio_name in cfg["audio_names"]:
+                    candidate = sample_dir / audio_name
+                    if candidate.exists():
+                        audio = candidate
+                        break
+                if audio is None:
+                    continue
 
-            gold = None
-            for name in cfg["gold_names"]:
-                if (sample_dir / name).exists():
-                    gold = sample_dir / name
-                    break
-            if gold is None:
-                continue
+                gold = None
+                for name in cfg["gold_names"]:
+                    if (sample_dir / name).exists():
+                        gold = sample_dir / name
+                        break
+                if gold is None:
+                    continue
 
-            pairs.append({
-                "sample_id": sample_dir.name,
-                "audio_path": audio,
-                "gold_path": gold,
-                "mode": mode,
-            })
+                pairs.append({
+                    "sample_id": sample_dir.name,
+                    "audio_path": audio,
+                    "gold_path": gold,
+                    "mode": mode,
+                })
 
     log.info(
         "Discovered %d sample pairs for provider %s (modes: %s)",

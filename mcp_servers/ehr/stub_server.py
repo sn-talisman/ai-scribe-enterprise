@@ -1,8 +1,9 @@
 """
-Stub EHR Server — reads patient context from local YAML files.
+Stub EHR Server — reads patient context from local JSON/YAML files.
 
-Implements the full EHRAdapter interface but reads from patient_context.yaml
-files instead of a live EHR system.  When real EHR integration is built,
+Implements the full EHRAdapter interface but reads from
+patient_demographics.json + encounter_details.json (or legacy patient_context.yaml)
+instead of a live EHR system.  When real EHR integration is built,
 only this file is replaced — the pipeline code is untouched.
 
 Usage:
@@ -12,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -36,40 +38,94 @@ log = logging.getLogger(__name__)
 
 class StubEHRServer(EHRAdapter):
     """
-    Reads patient context from local YAML files.
+    Reads patient context from local JSON files (new format) or YAML (legacy).
 
-    The context_path can be set per-encounter via set_context_path()
+    The context_dir can be set per-encounter via set_context_dir()
     before calling any read methods.
     """
 
-    def __init__(self, data_dir: str = "data") -> None:
+    def __init__(self, data_dir: str = "ai-scribe-data") -> None:
         self._data_dir = Path(data_dir)
-        self._context_path: Optional[Path] = None
+        self._context_dir: Optional[Path] = None
+        self._context_path: Optional[Path] = None  # legacy YAML path
         self._cache: dict[str, dict] = {}
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "StubEHRServer":
-        return cls(data_dir=cfg.get("data_dir", "data"))
+        return cls(data_dir=cfg.get("data_dir", "ai-scribe-data"))
+
+    def set_context_dir(self, dir_path: str | Path) -> None:
+        """Set the encounter directory containing JSON context files."""
+        self._context_dir = Path(dir_path)
+        self._context_path = None
+        self._cache.clear()
 
     def set_context_path(self, path: str | Path) -> None:
-        """Set the patient_context.yaml path for the current encounter."""
+        """Legacy: set a single patient_context.yaml path."""
         self._context_path = Path(path)
+        self._context_dir = None
         self._cache.clear()
 
     def _load_context(self) -> dict:
-        """Load and cache the current context YAML."""
-        if self._context_path is None:
-            return {}
-        key = str(self._context_path)
-        if key not in self._cache:
-            if self._context_path.exists():
-                with open(self._context_path) as f:
-                    self._cache[key] = yaml.safe_load(f) or {}
-                log.debug(f"stub_ehr: loaded context from {self._context_path}")
-            else:
-                log.warning(f"stub_ehr: context file not found: {self._context_path}")
-                self._cache[key] = {}
-        return self._cache[key]
+        """Load and cache context from JSON files or legacy YAML."""
+        cache_key = str(self._context_dir or self._context_path or "none")
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        ctx: dict = {}
+
+        if self._context_dir:
+            # New format: patient_demographics.json + encounter_details.json
+            demo_path = self._context_dir / "patient_demographics.json"
+            enc_path = self._context_dir / "encounter_details.json"
+
+            demo = {}
+            enc = {}
+            if demo_path.exists():
+                demo = json.loads(demo_path.read_text())
+                log.debug(f"stub_ehr: loaded demographics from {demo_path}")
+            if enc_path.exists():
+                enc = json.loads(enc_path.read_text())
+                log.debug(f"stub_ehr: loaded encounter details from {enc_path}")
+
+            provider = enc.get("provider", {})
+            ctx = {
+                "patient": {
+                    "name": f"{demo.get('first_name', '')} {demo.get('last_name', '')}".strip() or None,
+                    "date_of_birth": demo.get("date_of_birth"),
+                    "sex": None,
+                    "mrn": demo.get("record_number"),
+                },
+                "encounter": {
+                    "date_of_service": enc.get("date_of_exam"),
+                    "visit_type": enc.get("visit_type"),
+                    "date_of_injury": enc.get("date_of_accident") or None,
+                    "case_number": enc.get("case_number") or None,
+                    "encounter_id": enc.get("encounter_id"),
+                    "mode": enc.get("mode"),
+                    "location": enc.get("location"),
+                },
+                "provider": {
+                    "name": provider.get("full_name"),
+                    "credentials": None,
+                    "specialty": None,
+                },
+                "facility": {
+                    "name": None,
+                    "location": enc.get("location"),
+                },
+            }
+
+        elif self._context_path and self._context_path.exists():
+            # Legacy: single patient_context.yaml
+            with open(self._context_path) as f:
+                ctx = yaml.safe_load(f) or {}
+            log.debug(f"stub_ehr: loaded context from {self._context_path}")
+        else:
+            log.warning("stub_ehr: no context dir or path set")
+
+        self._cache[cache_key] = ctx
+        return ctx
 
     # ── READ ─────────────────────────────────────────────────────────────
 
@@ -90,7 +146,6 @@ class StubEHRServer(EHRAdapter):
         )
 
     async def get_problem_list(self, patient_id: str) -> list[EHRProblem]:
-        # Stub: no problem list in YAML context files
         return []
 
     async def get_medications(self, patient_id: str) -> list[EHRMedication]:
@@ -108,15 +163,15 @@ class StubEHRServer(EHRAdapter):
     # ── Context accessors (stub-specific) ────────────────────────────────
 
     def get_encounter_context(self) -> dict:
-        """Return the encounter block from patient_context.yaml."""
+        """Return the encounter block from context data."""
         return self._load_context().get("encounter", {})
 
     def get_provider_context(self) -> dict:
-        """Return the provider block from patient_context.yaml."""
+        """Return the provider block from context data."""
         return self._load_context().get("provider", {})
 
     def get_facility_context(self) -> dict:
-        """Return the facility block from patient_context.yaml."""
+        """Return the facility block from context data."""
         return self._load_context().get("facility", {})
 
     # ── WRITE ────────────────────────────────────────────────────────────

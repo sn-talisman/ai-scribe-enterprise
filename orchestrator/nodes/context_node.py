@@ -4,7 +4,7 @@ CONTEXT NODE — Pre-encounter context assembly.
 Loads patient demographics, encounter info, and clinical context
 via the EHR adapter from the engine registry.
 
-For stubbed mode (Session 7): reads from patient_context.yaml files
+For stubbed mode: reads from patient_demographics.json + encounter_details.json
 via StubEHRServer.
 
 For production: will read from FHIR, HL7v2, or browser extension adapters.
@@ -12,6 +12,7 @@ For production: will read from FHIR, HL7v2, or browser extension adapters.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -31,13 +32,21 @@ from orchestrator.state import (
 logger = logging.getLogger(__name__)
 
 
-def _find_context_yaml(state: EncounterState) -> Optional[Path]:
-    """Locate patient_context.yaml near the audio file."""
+def _find_context_files(state: EncounterState) -> Optional[Path]:
+    """Locate patient_demographics.json (or legacy patient_context.yaml) near the audio file.
+
+    Returns the parent directory if context files are found, None otherwise.
+    """
     if state.audio_file_path:
         audio_dir = Path(state.audio_file_path).parent
-        ctx_path = audio_dir / "patient_context.yaml"
-        if ctx_path.exists():
-            return ctx_path
+        # New format: JSON files
+        if (audio_dir / "patient_demographics.json").exists():
+            return audio_dir
+        if (audio_dir / "encounter_details.json").exists():
+            return audio_dir
+        # Legacy fallback: YAML
+        if (audio_dir / "patient_context.yaml").exists():
+            return audio_dir
     return None
 
 
@@ -49,14 +58,19 @@ def context_node(state: EncounterState) -> dict:
     context_packet = ContextPacket(source="manual")
 
     try:
-        ctx_path = _find_context_yaml(state)
-        if ctx_path:
+        ctx_dir = _find_context_files(state)
+        if ctx_dir:
             from mcp_servers.registry import get_registry
             ehr = get_registry().get_ehr()
 
-            # Set the context file path for StubEHRServer
-            if hasattr(ehr, "set_context_path"):
-                ehr.set_context_path(ctx_path)
+            # Set the context path for StubEHRServer
+            if hasattr(ehr, "set_context_dir"):
+                ehr.set_context_dir(ctx_dir)
+            elif hasattr(ehr, "set_context_path"):
+                # Legacy: single YAML file
+                yaml_path = ctx_dir / "patient_context.yaml"
+                if yaml_path.exists():
+                    ehr.set_context_path(yaml_path)
 
             # Load patient demographics (sync wrapper for async)
             import asyncio
@@ -114,12 +128,12 @@ def context_node(state: EncounterState) -> dict:
                 extra={
                     "encounter_id": state.encounter_id,
                     "patient_name": patient.name,
-                    "source": str(ctx_path),
+                    "source": str(ctx_dir),
                 },
             )
         else:
             logger.info(
-                "context_node: no patient_context.yaml found, using empty context",
+                "context_node: no context files found, using empty context",
                 extra={"encounter_id": state.encounter_id},
             )
 

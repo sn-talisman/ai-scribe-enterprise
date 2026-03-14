@@ -180,11 +180,11 @@ class TestPipelineSkeleton:
 
     def test_audio_file_path_preserved(self, graph):
         """Audio file path set on input must be visible to transcribe node."""
-        state = make_state(audio_file_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_file_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         final = run_encounter(graph, state)
         # Transcribe stub embeds the path in the transcript text
-        assert "224889" in final.transcript.full_text or \
-               final.audio_segments[0].storage_path == "data/dictation/224889/dictation.mp3"
+        assert "riley_dew_226680_20260219" in final.transcript.full_text or \
+               final.audio_segments[0].storage_path == "ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3"
 
     def test_ambient_mode_pipeline(self, graph):
         """Pipeline must work with AMBIENT (multi-speaker) mode."""

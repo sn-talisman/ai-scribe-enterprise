@@ -6,9 +6,8 @@ Usage:
     python scripts/run_pipeline.py <audio_file> [--mode dictation|ambient] [--save]
 
 Examples:
-    python scripts/run_pipeline.py data/dictation/224889/dictation.mp3
-    python scripts/run_pipeline.py data/dictation/224889/dictation.mp3 --save
-    python scripts/run_pipeline.py data/dictation/224889/dictation.mp3 --mode ambient
+    python scripts/run_pipeline.py ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3
+    python scripts/run_pipeline.py ai-scribe-data/conversation/dr_faraz_rahman/javier_waters_227534_20260303/conversation_audio.mp3 --mode ambient
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ def _discover_ollama_model() -> str:
             return models[0]["name"]
     except Exception:
         pass
-    return "qwen2.5:32b"
+    return "qwen2.5:14b"
 
 
 def main() -> None:

@@ -13,7 +13,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import encounters, providers, quality
+from api.routes import encounters, patients, providers, quality, specialties, templates
 from api.ws import session_events
 
 # ---------------------------------------------------------------------------
@@ -60,8 +60,11 @@ app.add_middleware(
 # Routes
 # ---------------------------------------------------------------------------
 app.include_router(encounters.router)
+app.include_router(patients.router)
 app.include_router(providers.router)
 app.include_router(quality.router)
+app.include_router(specialties.router)
+app.include_router(templates.router)
 app.include_router(session_events.router)
 
 

@@ -4,7 +4,7 @@ Session 3 tests: WhisperX ASR server + transcribe node + post-processor.
 Test layers:
   Unit  — mock ASR engine (no GPU required, always passes)
   Post  — post-processor unit tests (no GPU required)
-  Integ — real WhisperX on data/dictation/224889/dictation.mp3 (requires CUDA + models)
+  Integ — real WhisperX on ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3 (requires CUDA + models)
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ class TestTranscribeNodeUnit:
         from tests.test_note_node import MockLLMEngine
         set_llm_engine_factory(lambda: MockLLMEngine())
 
-        state = make_state(audio_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         graph = build_graph()
         final = run_encounter(graph, state)
 
@@ -257,7 +257,7 @@ class TestTranscribeNodeUnit:
         from tests.test_note_node import MockLLMEngine
         set_llm_engine_factory(lambda: MockLLMEngine())
 
-        state = make_state(audio_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         final = run_encounter(build_graph(), state)
 
         assert len(final.transcript.segments) == len(MOCK_RAW_SEGMENTS)
@@ -456,7 +456,7 @@ def _whisperx_available() -> tuple[bool, str]:
             return False, "CUDA not available"
     except ImportError:
         return False, "torch not installed"
-    if not Path("data/dictation/224889/dictation.mp3").exists():
+    if not Path("ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3").exists():
         return False, "test audio file not found"
     return True, ""
 
@@ -480,7 +480,7 @@ class TestTranscribeNodeIntegration:
         set_llm_engine_factory(None)
 
     def test_real_audio_produces_transcript(self):
-        state = make_state(audio_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         final = run_encounter(build_graph(), state)
 
         assert final.transcript is not None
@@ -490,7 +490,7 @@ class TestTranscribeNodeIntegration:
 
     def test_real_audio_contains_medical_terms(self):
         """The 224889 dictation mentions lumbar spine — should appear in transcript."""
-        state = make_state(audio_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         final = run_encounter(build_graph(), state)
 
         text = final.transcript.full_text.lower()
@@ -500,7 +500,7 @@ class TestTranscribeNodeIntegration:
         assert found, f"No medical terms found in transcript. Got: {text[:300]}"
 
     def test_postprocessor_applied_to_real_transcript(self):
-        state = make_state(audio_path="data/dictation/224889/dictation.mp3")
+        state = make_state(audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3")
         final = run_encounter(build_graph(), state)
 
         assert final.postprocessor_version == "medasr_postprocessor_v1"
@@ -509,7 +509,7 @@ class TestTranscribeNodeIntegration:
     def test_ambient_mode_requests_diarization(self):
         """AMBIENT mode should request diarization (even if no HF token is set)."""
         state = make_state(
-            audio_path="data/dictation/224889/dictation.mp3",
+            audio_path="ai-scribe-data/dictation/dr_faraz_rahman/riley_dew_226680_20260219/dictation.mp3",
             mode=RecordingMode.AMBIENT,
         )
         final = run_encounter(build_graph(), state)

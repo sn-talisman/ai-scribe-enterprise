@@ -3,6 +3,7 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export interface SampleSummary {
   sample_id: string;
   mode: "dictation" | "ambient";
+  physician: string;
   versions: string[];
   latest_version: string | null;
   has_gold: boolean;
@@ -85,39 +86,55 @@ export const fetchSamples = (mode?: string) =>
 export const fetchSample = (id: string) =>
   get<SampleDetail>(`/encounters/${id}`);
 
-export const fetchNote = (id: string, version = "v6") =>
+export const fetchNote = (id: string, version = "v7") =>
   get<{ content: string }>(`/encounters/${id}/note`, { version });
 
-export const fetchComparison = (id: string, version = "v6") =>
+export const fetchComparison = (id: string, version = "v7") =>
   get<{ content: string }>(`/encounters/${id}/comparison`, { version });
 
 export const fetchGoldNote = (id: string) =>
   get<{ content: string }>(`/encounters/${id}/gold`);
 
-export const fetchSampleQuality = (id: string, version = "v6") =>
+export const fetchSampleQuality = (id: string, version = "v7") =>
   get<QualityScore & { sample_id: string }>(`/encounters/${id}/quality`, { version });
 
-export const fetchTranscript = (id: string, version = "v6") =>
+export const fetchTranscript = (id: string, version = "v7") =>
   get<{ content: string; versions: string[] }>(`/encounters/${id}/transcript`, { version });
 
 export const fetchAudioUrl = (id: string): string =>
   `${BASE}/encounters/${id}/audio`;
 
 // Quality
-export const fetchAggregate = (version = "v5") =>
+export const fetchAggregate = (version = "v7") =>
   get<AggregateQuality>("/quality/aggregate", { version });
 
 export const fetchTrend = () =>
   get<{ trend: AggregateQuality[] }>("/quality/trend");
 
-export const fetchDimensions = (version = "v5") =>
+export const fetchDimensions = (version = "v7") =>
   get<DimensionScore[]>("/quality/dimensions", { version });
 
-export const fetchSampleScores = (version = "v5", mode?: string) =>
+export const fetchSampleScores = (version = "v7", mode?: string) =>
   get<Array<QualityScore & { sample_id: string; mode: string; version: string }>>(
     "/quality/samples",
     mode ? { version, mode } : { version }
   );
+
+// Quality — breakdowns
+export interface ProviderQuality {
+  provider_id: string;
+  provider_name: string;
+  sample_count: number;
+  average: number;
+  min: number;
+  max: number;
+}
+
+export const fetchQualityByMode = (version = "v7") =>
+  get<Record<string, AggregateQuality>>("/quality/by-mode", { version });
+
+export const fetchQualityByProvider = (version = "v7") =>
+  get<ProviderQuality[]>("/quality/by-provider", { version });
 
 // Providers
 export const fetchProviders = () => get<ProviderSummary[]>("/providers");
@@ -126,3 +143,161 @@ export const fetchProviderTrend = (id: string) =>
   get<{ trend: Array<{ version: string; score: number; date: string | null; samples: number | null }> }>(
     `/providers/${id}/quality-trend`
   );
+export const createProvider = (data: Record<string, unknown>) =>
+  post<ProviderSummary>("/providers", data);
+export const updateProvider = (id: string, data: Record<string, unknown>) =>
+  put<ProviderSummary>(`/providers/${id}`, data);
+
+// Specialties
+export interface SpecialtySummary {
+  id: string;
+  name: string;
+  term_count: number;
+  has_dictionary: boolean;
+}
+
+export interface SpecialtyDetail {
+  id: string;
+  name: string;
+  term_count: number;
+  terms: string[];
+}
+
+export const fetchSpecialties = () => get<SpecialtySummary[]>("/specialties");
+export const fetchSpecialty = (id: string) => get<SpecialtyDetail>(`/specialties/${id}`);
+export const createSpecialty = (data: { id: string; terms: string[] }) =>
+  post<SpecialtySummary>("/specialties", data);
+export const updateSpecialtyDictionary = (id: string, terms: string[]) =>
+  put<SpecialtyDetail>(`/specialties/${id}/dictionary`, { terms });
+
+// Templates
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  specialty: string;
+  visit_type: string;
+  section_count: number;
+  providers: string[];
+}
+
+export interface TemplateSection {
+  id: string;
+  label: string;
+  required: boolean;
+  prompt_hint: string;
+}
+
+export interface TemplateDetail {
+  id: string;
+  name: string;
+  specialty: string;
+  visit_type: string;
+  header_fields: string[];
+  sections: TemplateSection[];
+  formatting: Record<string, string>;
+  providers: string[];
+}
+
+export const fetchTemplates = () => get<TemplateSummary[]>("/templates");
+export const fetchTemplate = (id: string) => get<TemplateDetail>(`/templates/${id}`);
+export const createTemplate = (data: Record<string, unknown>) =>
+  post<TemplateSummary>("/templates", data);
+export const updateTemplate = (id: string, data: Record<string, unknown>) =>
+  put<TemplateDetail>(`/templates/${id}`, data);
+export const deleteTemplate = async (id: string) => {
+  const res = await fetch(`${BASE}/templates/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(err.detail || "Delete failed");
+  }
+};
+
+// Patients (EHR stub)
+export interface PatientSearchResult {
+  id: string;
+  first_name: string;
+  last_name: string;
+  date_of_birth: string;
+  sex: string;
+  mrn: string;
+  practice_id: string;
+}
+
+export const searchPatients = (q: string) =>
+  get<PatientSearchResult[]>("/patients/search", { q });
+
+// Encounter creation + upload
+export interface EncounterCreateResponse {
+  encounter_id: string;
+  status: string;
+  provider_id: string;
+  patient_id: string;
+  visit_type: string;
+  mode: string;
+  message: string | null;
+}
+
+export const createEncounter = (data: {
+  provider_id: string;
+  patient_id: string;
+  visit_type: string;
+  mode: string;
+}) => post<EncounterCreateResponse>("/encounters", data);
+
+export async function uploadEncounterAudio(
+  encounterId: string,
+  audioFile: File | Blob,
+  filename = "audio.mp3",
+): Promise<{ encounter_id: string; sample_id: string; status: string; message: string }> {
+  const form = new FormData();
+  form.append("audio", audioFile, filename);
+  const res = await fetch(`${BASE}/encounters/${encounterId}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `Upload failed (${res.status})` }));
+    throw new Error(err.detail || `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export const fetchEncounterStatus = (id: string) =>
+  get<{ encounter_id: string; status: string; message: string; sample_id?: string }>(
+    `/encounters/${id}/status`
+  );
+
+export const rerunPipeline = (sampleId: string) =>
+  post<{ encounter_id: string; sample_id: string; version: string; status: string; message: string }>(
+    `/encounters/${sampleId}/rerun`,
+    {}
+  );
+
+export const WS_BASE = BASE.replace(/^http/, "ws");
+
+// Mutation helpers
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `API ${res.status}` }));
+    throw new Error(err.detail || `API ${res.status}: ${path}`);
+  }
+  return res.json();
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `API ${res.status}` }));
+    throw new Error(err.detail || `API ${res.status}: ${path}`);
+  }
+  return res.json();
+}

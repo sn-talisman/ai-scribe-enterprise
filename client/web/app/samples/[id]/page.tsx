@@ -7,6 +7,7 @@ import {
   fetchTranscript,
 } from "@/lib/api";
 import SampleDetailTabs from "@/components/SampleDetailTabs";
+import RerunButton from "@/components/RerunButton";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ interface Props {
 
 export default async function SampleDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { version = "v6" } = await searchParams;
+  const { version = "v7" } = await searchParams;
 
   const [detail, note, comparison, gold, quality, transcript] = await Promise.allSettled([
     fetchSample(id),
@@ -72,22 +73,25 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
           )}
         </div>
 
-        {/* Version selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">Version:</span>
-          {(sampleDetail?.versions ?? ["v6"]).map((v) => (
-            <a
-              key={v}
-              href={`/samples/${id}?version=${v}`}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-              style={{
-                background: v === version ? "var(--brand-indigo)" : "#F1F5F9",
-                color: v === version ? "white" : "#64748B",
-              }}
-            >
-              {v}
-            </a>
-          ))}
+        {/* Version selector + Re-run */}
+        <div className="flex flex-col items-end gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Version:</span>
+            {(sampleDetail?.versions ?? ["v7"]).map((v) => (
+              <a
+                key={v}
+                href={`/samples/${id}?version=${v}`}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={{
+                  background: v === version ? "var(--brand-indigo)" : "#F1F5F9",
+                  color: v === version ? "white" : "#64748B",
+                }}
+              >
+                {v}
+              </a>
+            ))}
+          </div>
+          <RerunButton sampleId={id} />
         </div>
       </div>
 
@@ -131,7 +135,7 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
       <SampleDetailTabs
         sampleId={id}
         version={version}
-        availableVersions={sampleDetail?.versions ?? ["v6"]}
+        availableVersions={sampleDetail?.versions ?? ["v7"]}
         note={noteContent}
         comparison={compContent}
         gold={goldContent}

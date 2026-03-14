@@ -65,13 +65,27 @@ quality_history:
   samples: 22
   score: 4.443
   version: v6
+- date: '2026-03-13'
+  samples: 61
+  score: 4.31
+  version: v7
+- date: '2026-03-14'
+  samples: 61
+  score: 4.296
+  version: v7
+- date: '2026-03-14'
+  samples: 61
+  score: 4.349
+  version: v8
 quality_scores:
   v2: 4.323
   v4: 4.38
   v5: 4.334
   v6: 4.443
+  v7: 4.296
   v7q14: 4.515
   v7q32: 4.35
+  v8: 4.349
 specialty: orthopedic
 style_directives:
 - Write in third person (e.g. 'The patient presents...' not 'Patient presents')
@@ -93,4 +107,5 @@ template_routing:
   default: ortho_follow_up
   discharge: ortho_follow_up
   follow_up: ortho_follow_up
+  initial: ortho_initial_eval
   initial_evaluation: ortho_initial_eval

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class SampleSummary(BaseModel):
     sample_id: str
     mode: str  # "dictation" | "ambient"
+    physician: str = ""
     versions: list[str]
     latest_version: Optional[str]
     has_gold: bool
@@ -19,6 +20,7 @@ class SampleSummary(BaseModel):
 class SampleDetail(BaseModel):
     sample_id: str
     mode: str
+    physician: str = ""
     versions: list[str]
     latest_version: Optional[str]
     has_gold: bool
