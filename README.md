@@ -4,7 +4,7 @@ Fully self-hosted, HIPAA-compliant AI medical scribe. Converts doctor-patient
 conversations (ambient mode) and physician dictations (dictation mode) into
 structured clinical notes — with zero cloud dependencies and zero PHI egress.
 
-**Current quality:** 4.38 / 5.0 across 22 gold-standard orthopedic encounters
+**Current quality:** 4.44 / 5.0 across 22 gold-standard encounters
 (LLM-as-judge evaluation against hand-authored notes).
 
 ---
@@ -42,7 +42,7 @@ changes required.
 | Diarization | pyannote 3.1 | NVIDIA Multitalker-Parakeet |
 | Noise suppression | DeepFilterNet | RNNoise, passthrough |
 | LLM inference | Ollama (OpenAI-compatible API) | vLLM, SGLang |
-| LLM model | Qwen 2.5-32B (Apache 2.0) | Llama 3.1-70B |
+| LLM model | Qwen 2.5-14B (Apache 2.0) | Qwen 2.5-32B, Llama 3.1-70B |
 | Post-processing | 12-stage rule-based + 98K medical dict | ByT5 ML model (future) |
 | Orchestration | LangGraph | — |
 | Database | PostgreSQL | — |
@@ -53,12 +53,49 @@ changes required.
 
 ---
 
+## Test Dataset
+
+Audio files for testing are available on SharePoint:
+
+**[Download Test Dataset](https://talismansolutionscom.sharepoint.com/:f:/s/ExcelsiaITprojects-AIScribe/IgBCWV3umPwaRowR3nC8dGVGAV5_VlQBAOBqJuDOewniM58?e=s9fYUE)**
+
+The repository includes encounter metadata (patient demographics, gold-standard notes,
+encounter details) but **excludes audio files** (`.mp3`) due to size and PHI concerns.
+After downloading, place the audio files into their corresponding `ai-scribe-data/`
+encounter folders — the folder names in the SharePoint archive match the repo structure.
+
+### Data Directory Layout
+
+```
+ai-scribe-data/
+├── conversation/                           # Ambient (multi-speaker) encounters
+│   └── <physician_id>/
+│       └── <patient>_<mrn>_<date>/
+│           ├── conversation_audio.mp3      # Doctor-patient conversation (from SharePoint)
+│           ├── note_audio.mp3              # Optional: physician dictation after visit
+│           ├── final_soap_note.md          # Gold-standard clinical note
+│           ├── patient_demographics.json   # Patient name, DOB, sex, MRN
+│           └── encounter_details.json      # Visit type, provider, date, mode
+│
+├── dictation/                              # Single-speaker physician dictations
+│   └── <physician_id>/
+│       └── <patient>_<mrn>_<date>/
+│           ├── dictation.mp3               # Physician dictation audio (from SharePoint)
+│           ├── final_soap_note.md          # Gold-standard clinical note
+│           ├── patient_demographics.json
+│           └── encounter_details.json
+```
+
+All paths are configurable via environment variables (see [Configuration](#configuration) below).
+
+---
+
 ## Quick Start
 
 ```bash
 # 1. Install Ollama and pull a model
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:32b
+ollama pull qwen2.5:14b
 
 # 2. Install Python dependencies
 pip install -e ".[dev]"

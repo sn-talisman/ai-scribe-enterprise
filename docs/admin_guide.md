@@ -15,7 +15,8 @@ This guide covers platform configuration, onboarding, and management tasks for a
 7. [Engine Configuration](#7-engine-configuration)
 8. [Running the Pipeline](#8-running-the-pipeline)
 9. [Quality Evaluation](#9-quality-evaluation)
-10. [Troubleshooting](#10-troubleshooting)
+10. [Test Dataset](#10-test-dataset)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -560,7 +561,59 @@ For development and testing, the stub EHR roster provides ~20 dummy patients:
 
 ---
 
-## 10. Troubleshooting
+## 10. Test Dataset
+
+### 10.1 Download
+
+Audio files for testing are available on SharePoint:
+
+**[Download Test Dataset](https://talismansolutionscom.sharepoint.com/:f:/s/ExcelsiaITprojects-AIScribe/IgBCWV3umPwaRowR3nC8dGVGAV5_VlQBAOBqJuDOewniM58?e=s9fYUE)**
+
+The repository includes encounter metadata (patient demographics, gold-standard notes, encounter details) but **excludes audio files** (`.mp3`) due to size and PHI concerns. After downloading, place the audio files into their corresponding `ai-scribe-data/` encounter folders — the folder names in the SharePoint archive match the repo structure.
+
+### 10.2 Expected Folder Structure
+
+```
+ai-scribe-data/
+├── conversation/                           # Ambient (multi-speaker) encounters
+│   └── <physician_id>/
+│       └── <patient>_<mrn>_<date>/
+│           ├── conversation_audio.mp3      # Doctor-patient conversation
+│           ├── note_audio.mp3              # Optional: physician dictation after visit
+│           ├── final_soap_note.md          # Gold-standard clinical note
+│           ├── patient_demographics.json   # Patient name, DOB, sex, MRN
+│           └── encounter_details.json      # Visit type, provider, date, mode
+│
+├── dictation/                              # Single-speaker physician dictations
+│   └── <physician_id>/
+│       └── <patient>_<mrn>_<date>/
+│           ├── dictation.mp3               # Physician dictation audio
+│           ├── final_soap_note.md          # Gold-standard clinical note
+│           ├── patient_demographics.json
+│           └── encounter_details.json
+```
+
+### 10.3 Configurable Data Paths
+
+All data directory paths can be overridden via environment variables (defined in `config/paths.py`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AI_SCRIBE_ROOT` | Auto-detected project root | Base project root |
+| `AI_SCRIBE_DATA_DIR` | `{root}/ai-scribe-data` | Patient encounter data |
+| `AI_SCRIBE_OUTPUT_DIR` | `{root}/output` | Pipeline output |
+| `AI_SCRIBE_CONFIG_DIR` | `{root}/config` | Config files |
+
+Set these in your `.env` file or export before running:
+
+```bash
+export AI_SCRIBE_DATA_DIR=/mnt/efs/ai-scribe-data
+export AI_SCRIBE_OUTPUT_DIR=/mnt/efs/output
+```
+
+---
+
+## 11. Troubleshooting
 
 ### Common Issues
 
