@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { fetchSpecialty, updateSpecialtyDictionary } from "@/lib/api";
 import type { SpecialtyDetail } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 export default function SpecialtyDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const features = useFeatures();
   const id = params.id as string;
 
   const [specialty, setSpecialty] = useState<SpecialtyDetail | null>(null);
@@ -77,16 +79,18 @@ export default function SpecialtyDetailPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setEditing(!editing)}
-          className="px-4 py-2 text-sm font-medium rounded-lg"
-          style={{
-            background: editing ? "#F3F4F6" : "var(--brand-green)",
-            color: editing ? "#374151" : "white",
-          }}
-        >
-          {editing ? "Cancel" : "Edit Dictionary"}
-        </button>
+        {features.edit_specialties && (
+          <button
+            onClick={() => setEditing(!editing)}
+            className="px-4 py-2 text-sm font-medium rounded-lg"
+            style={{
+              background: editing ? "#F3F4F6" : "var(--brand-green)",
+              color: editing ? "#374151" : "white",
+            }}
+          >
+            {editing ? "Cancel" : "Edit Dictionary"}
+          </button>
+        )}
       </div>
 
       {success && (

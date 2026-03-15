@@ -11,6 +11,7 @@ import type { SampleSummary } from "@/lib/api";
 import ProviderTrendChart from "@/components/ProviderTrendChart";
 import SamplesTable from "@/components/SamplesTable";
 import ProviderEditForm from "@/components/ProviderEditForm";
+import { useFeatures } from "@/lib/useFeatures";
 
 interface ProviderProfile {
   id: string;
@@ -40,6 +41,7 @@ export default function ProviderDetailPage() {
   const [providerSamples, setProviderSamples] = useState<SampleSummary[]>([]);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const features = useFeatures();
 
   const loadData = () => {
     setLoading(true);
@@ -102,16 +104,18 @@ export default function ProviderDetailPage() {
             </div>
           </div>
         </div>
-        <button
-          onClick={() => setEditing(!editing)}
-          className="px-4 py-2 text-sm font-medium rounded-lg"
-          style={{
-            background: editing ? "#F3F4F6" : "var(--brand-green)",
-            color: editing ? "#374151" : "white",
-          }}
-        >
-          {editing ? "Cancel" : "Edit Provider"}
-        </button>
+        {features.edit_providers && (
+          <button
+            onClick={() => setEditing(!editing)}
+            className="px-4 py-2 text-sm font-medium rounded-lg"
+            style={{
+              background: editing ? "#F3F4F6" : "var(--brand-green)",
+              color: editing ? "#374151" : "white",
+            }}
+          >
+            {editing ? "Cancel" : "Edit Provider"}
+          </button>
+        )}
       </div>
 
       {editing ? (

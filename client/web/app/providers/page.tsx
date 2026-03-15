@@ -1,6 +1,7 @@
 import { fetchProviders, fetchQualityByProvider } from "@/lib/api";
 import Link from "next/link";
 import ScoreBadge from "@/components/ScoreBadge";
+import FeatureGate from "@/components/FeatureGate";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,15 @@ export default async function ProvidersPage() {
             {providers.length} providers across all encounters
           </p>
         </div>
-        <Link
-          href="/providers/new"
-          className="px-4 py-2 text-sm font-medium text-white rounded-lg"
-          style={{ background: "var(--brand-green)" }}
-        >
-          + New Provider
-        </Link>
+        <FeatureGate feature="create_providers">
+          <Link
+            href="/providers/new"
+            className="px-4 py-2 text-sm font-medium text-white rounded-lg"
+            style={{ background: "var(--brand-green)" }}
+          >
+            + New Provider
+          </Link>
+        </FeatureGate>
       </div>
 
       <div className="grid grid-cols-3 gap-5">

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createTemplate, fetchSpecialties } from "@/lib/api";
 import type { SpecialtySummary } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 const COMMON_SECTIONS = [
   { id: "chief_complaint", label: "Chief Complaint" },
@@ -34,6 +35,15 @@ interface SectionDraft {
 
 export default function NewTemplatePage() {
   const router = useRouter();
+  const features = useFeatures();
+
+  if (!features.create_templates) {
+    return (
+      <div className="p-8 text-gray-500">
+        Creating templates is not available on this server.
+      </div>
+    );
+  }
   const [specialties, setSpecialties] = useState<SpecialtySummary[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [name, setName] = useState("");

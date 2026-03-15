@@ -1,5 +1,6 @@
 import { fetchTemplates } from "@/lib/api";
 import Link from "next/link";
+import FeatureGate from "@/components/FeatureGate";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +24,15 @@ export default async function TemplatesPage() {
             {templates.length} note templates across all specialties
           </p>
         </div>
-        <Link
-          href="/templates/new"
-          className="px-4 py-2 text-sm font-medium text-white rounded-lg"
-          style={{ background: "var(--brand-green)" }}
-        >
-          + New Template
-        </Link>
+        <FeatureGate feature="create_templates">
+          <Link
+            href="/templates/new"
+            className="px-4 py-2 text-sm font-medium text-white rounded-lg"
+            style={{ background: "var(--brand-green)" }}
+          >
+            + New Template
+          </Link>
+        </FeatureGate>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

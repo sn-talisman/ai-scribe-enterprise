@@ -3,6 +3,9 @@ api/routes/encounters.py
 
 Encounter / sample routes. Reads from the output/ and data/ directories.
 Supports creating new encounters with audio upload → pipeline trigger.
+
+In provider-facing mode, pipeline operations (upload → trigger → poll → fetch)
+are proxied to the remote processing-pipeline server. PHI stays local.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from api.models import (
     EncounterCreateRequest,
     EncounterResponse,
 )
+from api.proxy import needs_proxy
 
 router = APIRouter(prefix="/encounters", tags=["encounters"])
 logger = structlog.get_logger()
@@ -310,19 +314,36 @@ async def upload_audio(
     enc["data_dir"] = str(encounter_dir)
     enc["output_dir"] = str(output_encounter_dir)
 
-    # Launch pipeline in background
-    asyncio.create_task(
-        _run_pipeline_async(
-            encounter_id=encounter_id,
-            sample_id=folder_name,
-            audio_path=str(audio_path),
-            mode=mode,
-            provider_id=provider_id,
-            visit_type=visit_type,
-            output_dir=str(output_encounter_dir),
-            data_dir=str(encounter_dir),
+    if needs_proxy():
+        # Provider-facing mode: send audio + encounter_details to pipeline server
+        # PHI (patient_demographics.json, patient_context.yaml) stays local
+        asyncio.create_task(
+            _proxy_pipeline_run(
+                encounter_id=encounter_id,
+                sample_id=folder_name,
+                audio_bytes=content,
+                audio_filename=audio_filename,
+                mode=mode,
+                provider_id=provider_id,
+                visit_type=visit_type,
+                encounter_details=encounter_details,
+                output_dir=str(output_encounter_dir),
+            )
         )
-    )
+    else:
+        # Local mode (both / processing-pipeline): run pipeline directly
+        asyncio.create_task(
+            _run_pipeline_async(
+                encounter_id=encounter_id,
+                sample_id=folder_name,
+                audio_path=str(audio_path),
+                mode=mode,
+                provider_id=provider_id,
+                visit_type=visit_type,
+                output_dir=str(output_encounter_dir),
+                data_dir=str(encounter_dir),
+            )
+        )
 
     return {
         "encounter_id": encounter_id,
@@ -330,6 +351,116 @@ async def upload_audio(
         "status": "processing",
         "message": "Audio received — pipeline running",
     }
+
+
+async def _proxy_pipeline_run(
+    encounter_id: str,
+    sample_id: str,
+    audio_bytes: bytes,
+    audio_filename: str,
+    mode: str,
+    provider_id: str,
+    visit_type: str,
+    encounter_details: dict,
+    output_dir: str,
+) -> None:
+    """
+    Proxy pipeline execution to the remote processing-pipeline server.
+
+    Flow: upload audio → trigger → poll until complete → fetch note+transcript.
+    PHI stays on the provider-facing server; only audio + encounter_details are sent.
+    """
+    from api.proxy import proxy_upload, proxy_trigger, proxy_status
+    from api.proxy import proxy_get_note, proxy_get_transcript
+    from api.ws.session_events import manager
+
+    enc = _encounters.get(encounter_id, {})
+
+    try:
+        await asyncio.sleep(0.5)
+        await manager.send_progress(encounter_id, "init", 5, "Uploading to pipeline server...")
+
+        # 1. Upload audio + de-identified metadata to pipeline server
+        upload_result = await proxy_upload(
+            audio_bytes=audio_bytes,
+            audio_filename=audio_filename,
+            sample_id=sample_id,
+            mode=mode,
+            provider_id=provider_id,
+            encounter_details=encounter_details,
+        )
+        job_id = upload_result["job_id"]
+        enc["pipeline_job_id"] = job_id
+
+        await manager.send_progress(encounter_id, "init", 10, "Triggering pipeline...")
+
+        # 2. Trigger pipeline execution
+        await proxy_trigger(
+            job_id=job_id,
+            mode=mode,
+            provider_id=provider_id,
+            visit_type=visit_type,
+        )
+
+        await manager.send_progress(encounter_id, "transcribe", 20, "Pipeline running on GPU server...")
+
+        # 3. Poll until complete (max ~10 minutes)
+        max_polls = 120
+        for i in range(max_polls):
+            await asyncio.sleep(5)
+            status = await proxy_status(job_id)
+            remote_status = status.get("status", "")
+            pct = status.get("pct", 0)
+            stage = status.get("stage", "")
+            message = status.get("message", "")
+
+            await manager.send_progress(encounter_id, stage, pct, message)
+
+            if remote_status == "complete":
+                break
+            elif remote_status == "error":
+                raise RuntimeError(f"Pipeline error: {message}")
+        else:
+            raise RuntimeError("Pipeline timed out after 10 minutes")
+
+        await manager.send_progress(encounter_id, "delivery", 90, "Fetching results...")
+
+        # 4. Fetch generated note and transcript back to local output/
+        out_path = Path(output_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        version = status.get("version", "v8")
+
+        try:
+            note_data = await proxy_get_note(sample_id, version)
+            note_content = note_data.get("content", "")
+            if note_content:
+                (out_path / f"generated_note_{version}.md").write_text(note_content)
+                logger.info("proxy_note_fetched", sample_id=sample_id, version=version)
+        except Exception as e:
+            logger.warning("proxy_note_fetch_failed", error=str(e))
+
+        try:
+            transcript_data = await proxy_get_transcript(sample_id, version)
+            transcript_content = transcript_data.get("content", "")
+            if transcript_content:
+                (out_path / f"audio_transcript_{version}.txt").write_text(transcript_content)
+                logger.info("proxy_transcript_fetched", sample_id=sample_id, version=version)
+        except Exception as e:
+            logger.warning("proxy_transcript_fetch_failed", error=str(e))
+
+        enc["status"] = "complete"
+        enc["message"] = f"Pipeline complete — {version} generated"
+        enc["version"] = version
+
+        await manager.send_complete(encounter_id, sample_id)
+        logger.info("proxy_pipeline_complete", encounter_id=encounter_id, sample_id=sample_id)
+
+    except Exception as e:
+        logger.error("proxy_pipeline_error", encounter_id=encounter_id, error=str(e))
+        enc["status"] = "error"
+        enc["message"] = f"Pipeline error: {str(e)}"
+        await manager.send_error(encounter_id, str(e))
 
 
 async def _run_pipeline_async(
@@ -491,27 +622,50 @@ async def rerun_pipeline(sample_id: str):
         "version": next_version,
     }
 
-    # Also check for note_audio (conversation mode has two audio files)
-    note_audio_path = None
-    if data_mode == "conversation":
-        for candidate in ["notes.mp3", "note_audio.mp3"]:
-            p = data_dir / candidate
-            if p.exists():
-                note_audio_path = str(p)
-                break
+    if needs_proxy():
+        # Provider-facing: send audio to pipeline server for re-processing
+        audio_bytes = Path(audio_path).read_bytes()
+        audio_filename = Path(audio_path).name
+        encounter_details = {}
+        details_path = data_dir / "encounter_details.json"
+        if details_path.exists():
+            encounter_details = json.loads(details_path.read_text())
 
-    asyncio.create_task(
-        _run_rerun_pipeline(
-            encounter_id=encounter_id,
-            sample_id=sample_id,
-            audio_path=audio_path,
-            note_audio_path=note_audio_path,
-            mode=mode,
-            provider_id=physician,
-            output_dir=str(out_dir),
-            version=next_version,
+        asyncio.create_task(
+            _proxy_pipeline_run(
+                encounter_id=encounter_id,
+                sample_id=sample_id,
+                audio_bytes=audio_bytes,
+                audio_filename=audio_filename,
+                mode=mode,
+                provider_id=physician,
+                visit_type=encounter_details.get("visit_type", "follow_up"),
+                encounter_details=encounter_details,
+                output_dir=str(out_dir),
+            )
         )
-    )
+    else:
+        # Local mode: run pipeline directly
+        note_audio_path = None
+        if data_mode == "conversation":
+            for candidate in ["notes.mp3", "note_audio.mp3"]:
+                p = data_dir / candidate
+                if p.exists():
+                    note_audio_path = str(p)
+                    break
+
+        asyncio.create_task(
+            _run_rerun_pipeline(
+                encounter_id=encounter_id,
+                sample_id=sample_id,
+                audio_path=audio_path,
+                note_audio_path=note_audio_path,
+                mode=mode,
+                provider_id=physician,
+                output_dir=str(out_dir),
+                version=next_version,
+            )
+        )
 
     return {
         "encounter_id": encounter_id,
@@ -613,10 +767,20 @@ async def _run_rerun_pipeline(
 
 
 @router.get("/{encounter_id}/status")
-def get_encounter_status(encounter_id: str):
+async def get_encounter_status(encounter_id: str):
     """Poll pipeline status for a created encounter."""
     enc = _encounters.get(encounter_id)
     if not enc:
-        # May be a real sample_id from output/
         raise HTTPException(status_code=404, detail=f"Encounter '{encounter_id}' not found")
+
+    # If proxied, fetch live status from pipeline server
+    if needs_proxy() and enc.get("pipeline_job_id"):
+        try:
+            from api.proxy import proxy_status
+            remote = await proxy_status(enc["pipeline_job_id"])
+            enc["status"] = remote.get("status", enc["status"])
+            enc["message"] = remote.get("message", enc["message"])
+        except Exception:
+            pass  # Return cached local state on proxy failure
+
     return enc

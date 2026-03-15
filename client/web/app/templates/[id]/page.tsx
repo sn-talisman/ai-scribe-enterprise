@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { fetchTemplate, updateTemplate } from "@/lib/api";
 import type { TemplateDetail, TemplateSection } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 export default function TemplateDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const features = useFeatures();
 
   const [template, setTemplate] = useState<TemplateDetail | null>(null);
   const [editing, setEditing] = useState(false);
@@ -108,16 +110,18 @@ export default function TemplateDetailPage() {
             </div>
           )}
         </div>
-        <button
-          onClick={() => setEditing(!editing)}
-          className="px-4 py-2 text-sm font-medium rounded-lg"
-          style={{
-            background: editing ? "#F3F4F6" : "var(--brand-green)",
-            color: editing ? "#374151" : "white",
-          }}
-        >
-          {editing ? "Cancel" : "Edit Sections"}
-        </button>
+        {features.edit_templates && (
+          <button
+            onClick={() => setEditing(!editing)}
+            className="px-4 py-2 text-sm font-medium rounded-lg"
+            style={{
+              background: editing ? "#F3F4F6" : "var(--brand-green)",
+              color: editing ? "#374151" : "white",
+            }}
+          >
+            {editing ? "Cancel" : "Edit Sections"}
+          </button>
+        )}
       </div>
 
       {success && (

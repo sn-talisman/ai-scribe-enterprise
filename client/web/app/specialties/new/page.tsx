@@ -3,9 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSpecialty } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 export default function NewSpecialtyPage() {
   const router = useRouter();
+  const features = useFeatures();
+
+  if (!features.create_specialties) {
+    return (
+      <div className="p-8 text-gray-500">
+        Creating specialties is not available on this server.
+      </div>
+    );
+  }
   const [id, setId] = useState("");
   const [termsText, setTermsText] = useState("");
   const [error, setError] = useState("");

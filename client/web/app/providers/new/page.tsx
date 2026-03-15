@@ -8,9 +8,19 @@ import {
   fetchTemplates,
 } from "@/lib/api";
 import type { SpecialtySummary, TemplateSummary } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 export default function NewProviderPage() {
   const router = useRouter();
+  const features = useFeatures();
+
+  if (!features.create_providers) {
+    return (
+      <div className="p-8 text-gray-500">
+        Creating providers is not available on this server.
+      </div>
+    );
+  }
   const [specialties, setSpecialties] = useState<SpecialtySummary[]>([]);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
 

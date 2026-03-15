@@ -1,5 +1,6 @@
 import { fetchSpecialties } from "@/lib/api";
 import Link from "next/link";
+import FeatureGate from "@/components/FeatureGate";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +16,15 @@ export default async function SpecialtiesPage() {
             {specialties.length} specialties with keyword dictionaries
           </p>
         </div>
-        <Link
-          href="/specialties/new"
-          className="px-4 py-2 text-sm font-medium text-white rounded-lg"
-          style={{ background: "var(--brand-green)" }}
-        >
-          + New Specialty
-        </Link>
+        <FeatureGate feature="create_specialties">
+          <Link
+            href="/specialties/new"
+            className="px-4 py-2 text-sm font-medium text-white rounded-lg"
+            style={{ background: "var(--brand-green)" }}
+          >
+            + New Specialty
+          </Link>
+        </FeatureGate>
       </div>
 
       <div className="grid grid-cols-3 gap-5">

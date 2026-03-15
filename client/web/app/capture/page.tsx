@@ -20,6 +20,7 @@ import {
   WS_BASE,
 } from "@/lib/api";
 import type { ProviderSummary, PatientSearchResult } from "@/lib/api";
+import { useFeatures } from "@/lib/useFeatures";
 
 const VISIT_TYPES = [
   { value: "initial_evaluation", label: "Initial Evaluation" },
@@ -41,6 +42,15 @@ interface WsEvent {
 
 export default function CapturePage() {
   const router = useRouter();
+  const features = useFeatures();
+
+  if (!features.record_audio && !features.trigger_pipeline) {
+    return (
+      <div className="p-8 text-gray-500">
+        Audio capture is not available on this server.
+      </div>
+    );
+  }
 
   // Providers
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
