@@ -31,6 +31,7 @@ import {
   type ProviderSummary,
   type PatientSearchResult,
 } from "../lib/api";
+import { useSettings } from "../store/settings";
 import { useOfflineStore } from "../store/offline";
 
 const VISIT_TYPES = [
@@ -79,16 +80,19 @@ export default function RecordScreen() {
   // Offline
   const { isOnline, enqueue, checkConnectivity } = useOfflineStore();
 
+  // Re-fetch when the API URL changes (e.g. user saves cloudflare tunnel URL)
+  const apiUrl = useSettings((s) => s.apiUrl);
+
   // Load data
   useEffect(() => {
     fetchProviders()
       .then((ps) => {
         setProviders(ps);
-        if (ps.length > 0) setProviderId(ps[0].id);
+        if (ps.length > 0 && !providerId) setProviderId(ps[0].id);
       })
       .catch(() => {});
     searchPatients("").then(setPatients).catch(() => {});
-  }, []);
+  }, [apiUrl]);
 
   // Patient search
   useEffect(() => {
@@ -275,22 +279,26 @@ export default function RecordScreen() {
       {/* Provider */}
       <Card>
         <Text style={styles.label}>Provider</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: spacing.sm }}>
-          {providers.map((p) => (
-            <TouchableOpacity
-              key={p.id}
-              onPress={() => setProviderId(p.id)}
-              style={[
-                styles.chip,
-                providerId === p.id && styles.chipActive,
-              ]}
-            >
-              <Text style={[styles.chipText, providerId === p.id && styles.chipTextActive]}>
-                {p.name ?? p.id}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {providers.length === 0 ? (
+          <Text style={styles.sublabel}>Loading providers...</Text>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: spacing.sm }}>
+            {providers.map((p) => (
+              <TouchableOpacity
+                key={p.id}
+                onPress={() => setProviderId(p.id)}
+                style={[
+                  styles.chip,
+                  providerId === p.id && styles.chipActive,
+                ]}
+              >
+                <Text style={[styles.chipText, providerId === p.id && styles.chipTextActive]}>
+                  {p.name ?? p.id}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </Card>
 
       {/* Patient */}

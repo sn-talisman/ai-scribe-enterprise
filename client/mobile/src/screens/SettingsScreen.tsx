@@ -11,21 +11,24 @@ import {
   ScrollView,
   Alert,
   useWindowDimensions,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import Card from "../components/Card";
 import Badge from "../components/Badge";
 import { colors, fontSize, spacing, radius } from "../lib/theme";
-import { useSettings } from "../store/settings";
+import { useSettings, DEFAULT_API_URL } from "../store/settings";
 import { useOfflineStore } from "../store/offline";
 
 export default function SettingsScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
-  const { apiUrl, setApiUrl } = useSettings();
+  const { apiUrl, setApiUrl, configured } = useSettings();
   const { queue, remove, processQueue, isOnline, checkConnectivity } = useOfflineStore();
   const [urlDraft, setUrlDraft] = useState(apiUrl);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const saveUrl = () => {
     const trimmed = urlDraft.trim().replace(/\/+$/, "");
@@ -34,7 +37,38 @@ export default function SettingsScreen() {
       return;
     }
     setApiUrl(trimmed);
+    setTestResult(null);
     Alert.alert("Saved", `API URL set to: ${trimmed}`);
+  };
+
+  const testConnection = async () => {
+    const trimmed = urlDraft.trim().replace(/\/+$/, "");
+    if (!trimmed) {
+      setTestResult({ ok: false, msg: "URL cannot be empty" });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${trimmed}/providers`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.ok) {
+        setTestResult({ ok: true, msg: "Connected to provider-facing server" });
+      } else {
+        setTestResult({ ok: false, msg: `Server responded with ${res.status}` });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Connection failed";
+      setTestResult({ ok: false, msg: msg.includes("abort") ? "Connection timed out (5s)" : msg });
+    }
+    setTesting(false);
+  };
+
+  const resetToDefault = () => {
+    setUrlDraft(DEFAULT_API_URL);
+    setTestResult(null);
   };
 
   const retryQueue = async () => {
@@ -49,15 +83,27 @@ export default function SettingsScreen() {
     >
       <Text style={styles.title}>Settings</Text>
 
+      {/* First-launch banner */}
+      {!configured && (
+        <Card style={{ backgroundColor: "#DBEAFE", borderColor: "#3B82F6" }}>
+          <View style={styles.row}>
+            <Ionicons name="information-circle" size={18} color="#1D4ED8" />
+            <Text style={{ color: "#1D4ED8", fontSize: fontSize.sm, marginLeft: spacing.sm, flex: 1 }}>
+              Configure the provider-facing server URL below, then tap "Test Connection" to verify.
+            </Text>
+          </View>
+        </Card>
+      )}
+
       {/* API URL */}
       <Card>
-        <Text style={styles.label}>API Server URL</Text>
+        <Text style={styles.label}>Provider Server URL</Text>
         <Text style={styles.hint}>
-          The FastAPI backend address. Must be reachable from this device.
+          The provider-facing FastAPI server address (port 8000). Must be reachable from this device — use a LAN IP, not localhost.
         </Text>
         <TextInput
           value={urlDraft}
-          onChangeText={setUrlDraft}
+          onChangeText={(t) => { setUrlDraft(t); setTestResult(null); }}
           style={styles.input}
           placeholder="http://192.168.1.100:8000"
           placeholderTextColor={colors.textTertiary}
@@ -65,9 +111,49 @@ export default function SettingsScreen() {
           autoCorrect={false}
           keyboardType="url"
         />
-        <TouchableOpacity style={styles.saveBtn} onPress={saveUrl}>
-          <Text style={styles.saveBtnText}>Save</Text>
-        </TouchableOpacity>
+
+        {/* Auto-detected default hint */}
+        {!configured && DEFAULT_API_URL !== "http://localhost:8000" && (
+          <Text style={[styles.hint, { color: colors.brand }]}>
+            Auto-detected: {DEFAULT_API_URL}
+          </Text>
+        )}
+
+        {/* Test result */}
+        {testResult && (
+          <View style={[styles.row, { marginTop: spacing.sm }]}>
+            <Ionicons
+              name={testResult.ok ? "checkmark-circle" : "close-circle"}
+              size={16}
+              color={testResult.ok ? colors.success : colors.error}
+            />
+            <Text style={{
+              fontSize: fontSize.xs,
+              color: testResult.ok ? colors.success : colors.error,
+              marginLeft: spacing.xs,
+              flex: 1,
+            }}>
+              {testResult.msg}
+            </Text>
+          </View>
+        )}
+
+        <View style={[styles.row, { marginTop: spacing.md, gap: spacing.sm }]}>
+          <TouchableOpacity style={styles.testBtn} onPress={testConnection} disabled={testing}>
+            {testing ? (
+              <ActivityIndicator size="small" color={colors.indigo} />
+            ) : (
+              <Ionicons name="pulse" size={14} color={colors.indigo} />
+            )}
+            <Text style={styles.testBtnText}>Test Connection</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.saveBtn} onPress={saveUrl}>
+            <Text style={styles.saveBtnText}>Save</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={resetToDefault} style={{ marginLeft: "auto" }}>
+            <Text style={{ fontSize: fontSize.xs, color: colors.textTertiary }}>Reset to Default</Text>
+          </TouchableOpacity>
+        </View>
       </Card>
 
       {/* Connection status */}
@@ -162,10 +248,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
-    alignSelf: "flex-start",
-    marginTop: spacing.md,
   },
   saveBtnText: { color: colors.textInverse, fontWeight: "600", fontSize: fontSize.sm },
+  testBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.indigo,
+  },
+  testBtnText: { color: colors.indigo, fontWeight: "600", fontSize: fontSize.sm },
   statusText: { fontSize: fontSize.sm, fontWeight: "600", marginLeft: spacing.sm },
   queueItem: {
     flexDirection: "row",

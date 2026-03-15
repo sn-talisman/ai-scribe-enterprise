@@ -16,11 +16,13 @@ import { Ionicons } from "@expo/vector-icons";
 import Badge from "../components/Badge";
 import { colors, fontSize, spacing, radius } from "../lib/theme";
 import { fetchProviders, type ProviderSummary } from "../lib/api";
+import { useSettings } from "../store/settings";
 
 export default function ProvidersScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
   const numColumns = isTablet ? 2 : 1;
+  const apiUrl = useSettings((s) => s.apiUrl);
 
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -32,7 +34,7 @@ export default function ProvidersScreen() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, apiUrl]);
 
   const onRefresh = async () => {
     setRefreshing(true);

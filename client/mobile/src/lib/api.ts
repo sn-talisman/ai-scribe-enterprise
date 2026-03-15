@@ -95,6 +95,11 @@ export interface UploadResponse {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+/** Common headers sent with every request (bypass tunnel interstitials, etc.) */
+const COMMON_HEADERS: Record<string, string> = {
+  "Bypass-Tunnel-Reminder": "true",
+};
+
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const base = getApiUrl();
   let fullUrl = `${base}${path}`;
@@ -104,7 +109,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
       .join("&");
     fullUrl += `?${qs}`;
   }
-  const res = await fetch(fullUrl);
+  const res = await fetch(fullUrl, { headers: COMMON_HEADERS });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${path} — ${body}`);
@@ -116,7 +121,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   const base = getApiUrl();
   const res = await fetch(`${base}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...COMMON_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -199,7 +204,7 @@ export async function uploadEncounterAudio(
   const res = await fetch(`${base}/encounters/${encounterId}/upload`, {
     method: "POST",
     body: form,
-    headers: { "Content-Type": "multipart/form-data" },
+    headers: { ...COMMON_HEADERS, "Content-Type": "multipart/form-data" },
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: `Upload failed (${res.status})` }));

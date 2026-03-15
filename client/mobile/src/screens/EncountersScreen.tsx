@@ -19,12 +19,14 @@ import { useNavigation } from "@react-navigation/native";
 import Badge from "../components/Badge";
 import { colors, fontSize, spacing, radius } from "../lib/theme";
 import { fetchSamples, fetchProviders, type SampleSummary, type ProviderSummary } from "../lib/api";
+import { useSettings } from "../store/settings";
 
 export default function EncountersScreen() {
   const nav = useNavigation<any>();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
   const numColumns = isTablet ? 2 : 1;
+  const apiUrl = useSettings((s) => s.apiUrl);
 
   const [samples, setSamples] = useState<SampleSummary[]>([]);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
@@ -41,7 +43,7 @@ export default function EncountersScreen() {
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, apiUrl]);
 
   const onRefresh = async () => {
     setRefreshing(true);

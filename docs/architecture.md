@@ -14,19 +14,216 @@
 
 **P6: LangGraph orchestrates, MCP connects tools, A2A connects agents.** The encounter pipeline is a state graph (LangGraph). Each node connects to its tools via MCP servers. Services communicate via A2A protocol for future interoperability.
 
+**P7: PHI isolation by architecture.** The system separates provider-facing (CPU, holds PHI) and processing-pipeline (GPU, no PHI) servers at the deployment layer. Patient demographics never leave the provider-facing server. Only audio and de-identified metadata cross the boundary. This is enforced by code, config, and sync policy — not by convention.
+
 ---
 
 ## 2. System Architecture Overview
 
 ![AI Scribe Enterprise — System Architecture](images/architecture_diagram.png)
 
-*The diagram above shows the four main layers: (1) the LangGraph pipeline (CONTEXT → CAPTURE → TRANSCRIBE → NOTE → REVIEW → DELIVERY) with the shared EncounterState flowing through all nodes; (2) the MCP Engine Registry connecting to pluggable ASR, LLM, and EHR servers; (3) supporting components including the post-processor, provider profile system, template engine, and quality evaluation framework; and (4) the FastAPI backend and Next.js web application.*
+*The diagram above shows the four main layers: (1) the LangGraph pipeline (CONTEXT → CAPTURE → TRANSCRIBE → NOTE → REVIEW → DELIVERY) with the shared EncounterState flowing through all nodes; (2) the MCP Engine Registry connecting to pluggable ASR, LLM, and EHR servers; (3) supporting components including the post-processor, provider profile system, template engine, and quality evaluation framework; and (4) the dual-server deployment with FastAPI backends, Next.js web UIs, and a React Native mobile app.*
+
+### Dual-Server Architecture
+
+AI Scribe Enterprise is deployed as **two server roles** from a single codebase:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       CLIENTS                               │
+│   Web App (Next.js :3000)  ·  Mobile App (Expo/RN)          │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ HTTPS
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│          PROVIDER-FACING SERVER  (port 8000)                │
+│                                                             │
+│  FastAPI: encounter browsing, EHR/patient access, audio     │
+│  capture, proxy to pipeline. Holds PHI locally.             │
+│  Web UI (port 3000): read-only dashboard for clinicians     │
+│                                                             │
+│  Data: ai-scribe-data/ (audio + PHI), output/ (synced)      │
+│  Config: synced from pipeline server every 2 hours          │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ HTTP (internal, authenticated)
+                  │ Audio + encounter_details.json only (NO PHI)
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│       PROCESSING-PIPELINE SERVER  (port 8100)               │
+│                                                             │
+│  FastAPI: pipeline execution (ASR + LLM on GPU), admin      │
+│  CRUD for providers/templates/specialties, batch processing  │
+│  Admin UI (port 3100): full management dashboard            │
+│                                                             │
+│  Data: pipeline-data/ (received audio), pipeline-output/     │
+│  Config: authoritative source for all config files          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Development mode:** Set `role: "both"` in `config/deployment.yaml` — both roles run in a single process on port 8000 with all features enabled, no proxy or sync needed.
+
+**Production mode:** Each server runs with its own role via `AI_SCRIBE_SERVER_ROLE` env var. The provider-facing server proxies pipeline operations to the GPU server and periodically syncs config back.
+
+> For detailed team-specific documentation, see [docs/dual_server_guide.md](dual_server_guide.md).
 
 ---
 
-## 3. Technology Stack (All Self-Hosted)
+## 3. Deployment Architecture
 
-### 2.1 Complete Component Inventory
+The dual-server split is the primary architectural boundary of the system. Every API route, data directory, feature flag, and sync mechanism is driven by the server role.
+
+### 3.1 Server Roles
+
+| Property | Provider-Facing Server | Processing-Pipeline Server |
+|----------|----------------------|---------------------------|
+| **Role value** | `provider-facing` | `processing-pipeline` |
+| **Purpose** | Serves clinicians — encounter browsing, capture, patient lookup | Runs GPU pipeline, admin ops, template/provider management |
+| **API Port** | 8000 | 8100 |
+| **Web UI Port** | 3000 (Provider Portal) | 3100 (Admin UI) |
+| **Data Dir** | `ai-scribe-data/` | `pipeline-data/` |
+| **Output Dir** | `output/` | `pipeline-output/` |
+| **Config** | Synced from pipeline | Authoritative source |
+| **GPU Required** | No | Yes (WhisperX, Ollama) |
+| **EHR Access** | Yes (local) | No |
+| **Admin CRUD** | Read-only | Full |
+| **Mobile App** | Connects here | N/A |
+
+### 3.2 Role Selection
+
+The server role is determined by `config/deployment.yaml` or overridden by `AI_SCRIBE_SERVER_ROLE`:
+
+```bash
+# Provider-facing server
+AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --port 8000
+
+# Processing-pipeline server
+AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --port 8100
+
+# Development (both roles in one process)
+uvicorn api.main:app --reload --port 8000
+```
+
+The role drives two resolution chains:
+1. **API route mounting** (`api/main.py`): Routers are conditionally included based on `cfg.is_provider_facing` / `cfg.is_processing_pipeline`.
+2. **Data directory resolution** (`config/paths.py`): `DATA_DIR` and `OUTPUT_DIR` resolve to different paths per role.
+
+### 3.3 PHI Isolation
+
+Patient demographics **never leave the provider-facing server**. The proxy layer (`api/proxy.py`) enforces this:
+
+| Data | Provider Server | Pipeline Server |
+|------|:-:|:-:|
+| `patient_demographics.json` (name, DOB, MRN) | Stored | **NEVER sent** |
+| `patient_context.yaml` (clinical context with names) | Stored | **NEVER sent** |
+| `final_soap_note.md` (gold standard with patient names) | Stored | **NEVER sent** |
+| Audio files (voice data, needed for ASR) | Stored | Sent for processing |
+| `encounter_details.json` (mode, visit_type, provider_id) | Stored | Sent (de-identified) |
+| Generated notes (clinical content) | Synced back | Generated here |
+| Templates, providers, dictionaries | Synced from pipeline | Authoritative source |
+
+### 3.4 Inter-Server Communication
+
+**Proxy pattern (provider → pipeline):** When the provider-facing server receives a pipeline operation (create encounter, upload audio, poll status), `api/proxy.py` forwards it:
+
+```python
+# api/proxy.py — simplified flow
+client = httpx.AsyncClient(base_url="http://pipeline-server:8100")
+resp = await client.post("/pipeline/upload", files={"audio": ...}, data={...})
+# Only sends audio + encounter_details.json, NEVER PHI
+```
+
+**Config sync (pipeline → provider):** Background `asyncio` task in `api/sync.py` pulls every 2 hours:
+- `GET /providers` → writes `config/providers/*.yaml`
+- `GET /templates` → writes `config/templates/*.yaml`
+- `GET /specialties` → writes `config/dictionaries/*.txt`
+
+**Inter-server auth:** When `security.inter_server_auth.enabled: true` in `deployment.yaml`, all proxy requests include `X-Inter-Server-Auth` header with a shared secret from the `AI_SCRIBE_INTER_SERVER_SECRET` env var.
+
+### 3.5 API Route Map by Role
+
+**Shared routes (mounted on both servers):**
+- `GET /encounters`, `GET /encounters/{id}`, `/note`, `/transcript`, `/comparison`, `/quality`
+- `GET /quality/aggregate`, `GET /quality/by-provider`
+- `WS /ws/encounters/{id}` (real-time pipeline progress)
+- `GET /config/features`, `GET /config/role`, `GET /health`
+
+**Provider-facing only (port 8000):**
+- `GET /patients/search` — EHR patient roster (local data, never proxied)
+- `GET /providers`, `GET /providers/{id}` — read-only
+- `POST /encounters` — create encounter → proxied to pipeline
+- `POST /encounters/{id}/upload` — upload audio → proxied to pipeline
+
+**Processing-pipeline only (port 8100):**
+- `POST /pipeline/upload`, `POST /pipeline/trigger/{job_id}`, `GET /pipeline/status/{job_id}`
+- `GET /pipeline/output/{id}/note`, `GET /pipeline/output/{id}/transcript`
+- `POST /pipeline/batch/upload`, `POST /pipeline/batch/trigger`
+- `GET/POST/PUT /providers` — full CRUD
+- `GET/POST/PUT/DELETE /templates` — full CRUD
+- `GET/POST/PUT/DELETE /specialties` — full CRUD
+
+### 3.6 Client Applications
+
+**Web app** (`client/web/`): A single Next.js codebase serves both roles. The `NEXT_PUBLIC_API_URL` env var determines which API it connects to:
+- Port 3000 → provider-facing API (8000): read-only dashboard, Capture page, no admin CRUD
+- Port 3100 → pipeline API (8100): full admin UI with provider/template/specialty management
+
+**Mobile app** (`client/mobile/`): React Native/Expo app connects to the provider-facing server (port 8000). API URL is configurable at runtime via the Settings screen (supports Cloudflare tunnel URLs for remote access).
+
+### 3.7 Data Directory Layout
+
+```
+ai-scribe-enterprise/
+├── ai-scribe-data/              ← Provider-facing DATA_DIR
+│   └── {mode}/{provider_id}/{sample_id}/
+│       ├── audio.mp3
+│       ├── patient_demographics.json    ← PHI (stays local)
+│       ├── encounter_details.json       ← de-identified (sent to pipeline)
+│       └── patient_context.yaml         ← PHI (stays local)
+│
+├── output/                      ← Provider-facing OUTPUT_DIR (synced from pipeline)
+│   └── {mode}/{provider_id}/{sample_id}/
+│       ├── generated_note_v8.md
+│       └── audio_transcript_v8.txt
+│
+├── pipeline-data/               ← Pipeline DATA_DIR (received from provider)
+│   └── {mode}/{provider_id}/{sample_id}/
+│       ├── audio.mp3
+│       └── encounter_details.json
+│
+├── pipeline-output/             ← Pipeline OUTPUT_DIR (generated by GPU pipeline)
+│   └── {mode}/{provider_id}/{sample_id}/
+│       ├── generated_note_v8.md
+│       ├── audio_transcript_v8.txt
+│       └── quality_report.md
+│
+└── config/                      ← Authoritative on pipeline; synced to provider
+    ├── deployment.yaml
+    ├── engines.yaml
+    ├── providers/*.yaml
+    ├── templates/*.yaml
+    └── dictionaries/*.txt
+```
+
+### 3.8 Feature Flags
+
+Feature flags control what each server role can do (`config/deployment.py: FeatureFlags`):
+
+| Feature | Provider-Facing | Pipeline | Both |
+|---------|:-:|:-:|:-:|
+| Dashboard, view encounters/providers/quality | Yes | Yes | Yes |
+| Record audio, trigger pipeline (proxied) | Yes | — | Yes |
+| EHR access, patient search | Yes | — | Yes |
+| Run pipeline (GPU) | — | Yes | Yes |
+| Batch processing | — | Yes | Yes |
+| Create/edit providers, templates, specialties | — | Yes | Yes |
+
+Every route calls `require_feature(name)` — returns HTTP 403 if the feature is not enabled for the current role.
+
+---
+
+## 4. Technology Stack (All Self-Hosted)
+
+### 4.1 Complete Component Inventory
 
 ```
 LAYER              COMPONENT                    LICENSE          ROLE
@@ -69,7 +266,7 @@ MONITORING         Grafana + Prometheus          AGPL/Apache      Metrics and da
 TOTAL LICENSE COST: $0/month
 ```
 
-### 2.2 Infrastructure Tiers
+### 4.2 Infrastructure Tiers
 
 ```
 TIER 1 — Proof of Concept ($260/mo)
@@ -95,9 +292,9 @@ TIER 3 — Quality Maximum ($1,250/mo)
 
 ---
 
-## 4. Encounter Pipeline (LangGraph State Graph)
+## 5. Encounter Pipeline (LangGraph State Graph)
 
-### 3.1 Top-Level Graph
+### 5.1 Top-Level Graph
 
 ```
                      ENCOUNTER STATE GRAPH (LangGraph)
@@ -130,7 +327,7 @@ TIER 3 — Quality Maximum ($1,250/mo)
                                                    └──────────┘
 ```
 
-### 3.2 Session State Schema
+### 5.2 Session State Schema
 
 The state object flows through every node, accumulating data at each stage:
 
@@ -184,7 +381,7 @@ class EncounterState(BaseModel):
     metrics: EncounterMetrics = EncounterMetrics()
 ```
 
-### 3.3 Node Detail: Pre-Processing → Core → Post-Processing
+### 5.3 Node Detail: Pre-Processing → Core → Post-Processing
 
 Every node is itself a sub-graph with pre-processing, core execution, and post-processing steps. Each step is independently skippable, retriable, and swappable.
 
@@ -249,11 +446,11 @@ POST:  confirm_delivery → write_audit_log → apply_retention_policy
 
 ---
 
-## 5. MCP Tool Servers (Plug-and-Play Layer)
+## 6. MCP Tool Servers (Plug-and-Play Layer)
 
 Every external capability is wrapped in an MCP server with a standard interface. The LangGraph nodes call tools via MCP — they never call engines directly.
 
-### 4.1 ASR MCP Servers
+### 6.1 ASR MCP Servers
 
 ```
 mcp_servers/asr/
@@ -271,7 +468,7 @@ tools:
   - get_capabilities() → {streaming, diarization, medical_vocab, max_speakers}
 ```
 
-### 4.2 LLM MCP Servers
+### 6.2 LLM MCP Servers
 
 ```
 mcp_servers/llm/
@@ -293,7 +490,7 @@ tools:
 # Switching between them is a URL + API key config change.
 ```
 
-### 4.3 EHR MCP Servers
+### 6.3 EHR MCP Servers
 
 ```
 mcp_servers/ehr/
@@ -321,7 +518,7 @@ tools:
   - navigate(command) → NavigationResult
 ```
 
-### 4.4 Audio Processing MCP Servers
+### 6.4 Audio Processing MCP Servers
 
 ```
 mcp_servers/audio/
@@ -339,7 +536,7 @@ tools:
   - estimate_snr(audio) → QualityScore
 ```
 
-### 4.5 Data/Reference MCP Servers
+### 6.5 Data/Reference MCP Servers
 
 ```
 mcp_servers/data/
@@ -362,9 +559,9 @@ tools:
 
 ---
 
-## 6. Engine Registry and Routing
+## 7. Engine Registry and Routing
 
-### 5.1 Engine Registry
+### 7.1 Engine Registry
 
 All MCP servers register with the Engine Registry at startup. The registry tracks health, capabilities, and quality metrics.
 
@@ -380,7 +577,7 @@ class EngineRegistry:
     def get_quality_scores(type, provider_id) → dict[engine_name, score]
 ```
 
-### 5.2 ASR Router Decision Logic
+### 7.2 ASR Router Decision Logic
 
 ```python
 def select_asr_engine(profile, audio_meta, registry):
@@ -409,7 +606,7 @@ def select_asr_engine(profile, audio_meta, registry):
     )
 ```
 
-### 5.3 LLM Router Decision Logic
+### 7.3 LLM Router Decision Logic
 
 ```python
 def select_llm_engine(profile, task, registry):
@@ -435,9 +632,9 @@ def select_llm_engine(profile, task, registry):
 
 ---
 
-## 7. Plug-and-Play Configuration
+## 8. Plug-and-Play Configuration
 
-### 6.1 Inference Endpoints (Ollama Default)
+### 8.1 Inference Endpoints (Ollama Default)
 
 ```yaml
 # config/engines.yaml
@@ -523,7 +720,7 @@ post_processing:
   confidence_threshold: 0.85
 ```
 
-### 6.2 Provider Profile
+### 8.2 Provider Profile
 
 ```yaml
 # Each provider gets a profile that tunes the entire pipeline
@@ -564,7 +761,7 @@ provider:
 
 ---
 
-## 8. Feature → Component Traceability
+## 9. Feature → Component Traceability
 
 ```
 FEATURE (from requirements)              PIPELINE COMPONENTS                 PHASE
@@ -621,9 +818,9 @@ P3 Silent Mid-Visit Addendum             Capture.input_merger                3
 
 ---
 
-## 9. Data Model
+## 10. Data Model
 
-### 8.1 Core Entities
+### 10.1 Core Entities
 
 ```
 Encounter {
@@ -660,7 +857,7 @@ AudioSegment {
 }
 ```
 
-### 8.2 Storage
+### 10.2 Storage
 
 ```
 PostgreSQL     — Encounters, provider profiles, quality metrics, corrections
@@ -671,9 +868,9 @@ File system    — Model weights (Ollama manages), templates, dictionaries
 
 ---
 
-## 10. Learning Service (Continuous Improvement)
+## 11. Learning Service (Continuous Improvement)
 
-### 9.1 Correction Flow
+### 11.1 Correction Flow
 
 ```
 Provider edits note in Review UI
@@ -693,7 +890,7 @@ Provider edits note in Review UI
     └── All corrections → (transcript, approved_note) pairs for future LoRA fine-tuning
 ```
 
-### 9.2 Retraining Triggers
+### 11.2 Retraining Triggers
 
 ```
 ASR Post-Processor:   Every 100 ASR corrections → retrain ByT5 model
@@ -705,7 +902,7 @@ A/B Tests:            Per-provider, per-encounter assignment → statistical gra
 
 ---
 
-## 11. Implementation Phases
+## 12. Implementation Phases
 
 ```
 PHASE 1 — MVP (Weeks 1-8)
@@ -755,7 +952,7 @@ PHASE 4 — Scale (Weeks 25+)
 
 ---
 
-## 12. Claude Code Project Structure
+## 13. Project Structure
 
 ```
 ai-scribe/
@@ -763,7 +960,7 @@ ai-scribe/
 ├── README.md
 ├── docker-compose.yml              # Full stack: app + GPUs + DBs
 ├── config/
-│   ├── engines.yaml                # Engine configuration (§6.1)
+│   ├── engines.yaml                # Engine configuration (§8.1)
 │   ├── templates/                  # Note templates by specialty
 │   │   ├── soap_default.yaml
 │   │   ├── ortho_followup.yaml
@@ -945,9 +1142,9 @@ ai-scribe/
 
 ---
 
-## 13. Provider-Specific ASR Optimization
+## 14. Provider-Specific ASR Optimization
 
-### 12.1 LoRA Fine-Tuning — Decision Record
+### 14.1 LoRA Fine-Tuning — Decision Record
 
 **Status: Infrastructure complete, disabled by default.**
 
@@ -966,7 +1163,7 @@ The LoRA fine-tuning pipeline (Session 10) was built and evaluated on 22 samples
 - Verbatim transcripts (word-for-word of what was spoken), not SOAP summaries
 - ≥30 minutes per provider (minimum viable)
 - 1–2 hours per provider (sweet spot for LoRA)
-- These are accumulated via the correction-capture learning loop (§9)
+- These are accumulated via the correction-capture learning loop (§11)
 
 **Deployment decision:**
 - LoRA is disabled in the main path (`lora_enabled: false` in engines.yaml)
@@ -982,9 +1179,9 @@ engine = registry.get_asr_for_provider(
 )
 ```
 
-### 12.2 Data Flywheel for Provider LoRA
+### 14.2 Data Flywheel for Provider LoRA
 
-The correction-capture loop (§9) is the path to meaningful per-provider LoRA:
+The correction-capture loop (§11) is the path to meaningful per-provider LoRA:
 
 ```
 Provider dictates → Whisper transcribes → Provider corrects output
@@ -1007,7 +1204,7 @@ Better model → fewer corrections → faster accumulation
 
 Ambient LoRA does not need verbatim transcripts — SOAP note labels work because the reference for ambient WER is already a summary document. The current ambient adapter (-11.6% WER) can be deployed today for providers with significant ambient encounter volume.
 
-### 12.3 Other Provider-Specific ASR Optimizations
+### 14.3 Other Provider-Specific ASR Optimizations
 
 Beyond LoRA, the following knobs are available per provider via `asr_overrides` in provider profiles. None require retraining — they tune inference behavior only.
 
@@ -1037,7 +1234,7 @@ Beyond LoRA, the following knobs are available per provider via `asr_overrides` 
 
 ---
 
-## 14. Getting Started (Claude Code Sequence)
+## 15. Getting Started (Build Sequence)
 
 ```
 SESSION 1:  Project scaffolding + state schema + LangGraph skeleton
@@ -1062,11 +1259,11 @@ SESSION 18+: Advanced features (coding, patient summaries, voice commands)
 
 ---
 
-## 15. Onboarding Procedures
+## 16. Onboarding Procedures
 
 This section documents how to add new physicians, templates, specialties, and medical dictionaries to the platform.
 
-### 15.1 Onboarding a New Physician
+### 16.1 Onboarding a New Physician
 
 A physician is represented by a **provider profile** YAML file in `config/providers/`. The profile controls template selection, custom vocabulary, style directives, and quality tracking.
 
@@ -1141,7 +1338,7 @@ python scripts/run_quality_sweep.py --version v8 --judge-model llama3.1:latest
 
 Quality scores are automatically written back to the provider's `quality_history` and `quality_scores` fields.
 
-### 15.2 Adding a New Template
+### 16.2 Adding a New Template
 
 Templates define the section structure and formatting rules for clinical notes. Each template is a YAML file in `config/templates/`.
 
@@ -1198,7 +1395,7 @@ template_routing:
 | `neuro_initial_eval` | Neurology | Initial | 8 (HPI through Plan) |
 | `neuro_follow_up` | Neurology | Follow-up | 6 (HPI through Plan) |
 
-### 15.3 Adding a New Specialty
+### 16.3 Adding a New Specialty
 
 A specialty is not a separate entity — it is the combination of templates + dictionaries + provider profiles that share a `specialty` field.
 
@@ -1222,7 +1419,7 @@ Sources for building specialty dictionaries:
 
 Create `config/providers/{provider_id}.yaml` for each physician in this specialty with `specialty: {specialty_name}` and appropriate `template_routing`.
 
-### 15.4 Medical Dictionary Management
+### 16.4 Medical Dictionary Management
 
 The dictionary system has three tiers:
 
@@ -1246,7 +1443,7 @@ config/dictionaries/
 - Used as ASR hotwords for logit boosting during transcription
 - Added to the post-processor dictionary for spell-checking
 
-### 15.5 Template Selection Chain (Full Resolution)
+### 16.5 Template Selection Chain (Full Resolution)
 
 The complete template resolution flow for any encounter:
 
@@ -1272,7 +1469,7 @@ The complete template resolution flow for any encounter:
 4. Template sections + formatting rules → injected into LLM prompt
 ```
 
-### 15.6 Golden Source (Gold Standard) Availability
+### 16.6 Golden Source (Gold Standard) Availability
 
 Quality evaluation compares generated notes against a **golden source** (`final_soap_note.md`). The availability of this reference varies by encounter origin:
 
@@ -1291,7 +1488,7 @@ Quality evaluation compares generated notes against a **golden source** (`final_
 
 This design ensures the quality framework scales naturally: historical data provides immediate benchmarks, while live encounters build gold standards over time through clinical use.
 
-### 15.7 On-Demand Pipeline Re-run
+### 16.7 On-Demand Pipeline Re-run
 
 Any existing sample can be re-processed via `POST /encounters/{sample_id}/rerun`:
 
@@ -1302,7 +1499,7 @@ Any existing sample can be re-processed via `POST /encounters/{sample_id}/rerun`
 - New version appears in the sample detail page version selector
 - Version discovery is dynamic — `api/data_loader.py` scans for all `v*` files rather than a hardcoded list
 
-### 15.8 Test Patient Data
+### 16.8 Test Patient Data
 
 The stub EHR roster (`config/ehr_stub/patient_roster.json`) contains ~20 dummy patients for development and testing:
 
@@ -1311,3 +1508,9 @@ The stub EHR roster (`config/ehr_stub/patient_roster.json`) contains ~20 dummy p
 - Test encounters are stored in the standard `ai-scribe-data/` and `output/` directories alongside real data
 - Test encounters are fully processed by the pipeline and appear in the Samples list
 - The `_TEST` suffix makes test data easy to identify and filter in both the UI and the file system
+
+---
+
+> **Note:** The detailed dual-server deployment architecture has been moved to [§3. Deployment Architecture](#3-deployment-architecture) as a primary section of this document. For team-specific implementation details, see [docs/dual_server_guide.md](dual_server_guide.md).
+
+*The detailed content that was previously in this section has been restructured into [§3. Deployment Architecture](#3-deployment-architecture) and expanded in [docs/dual_server_guide.md](dual_server_guide.md).*
