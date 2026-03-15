@@ -126,6 +126,33 @@ class WhisperXServer(ASREngine):
         )
         logger.info("whisperx: model loaded")
 
+    def unload_model(self) -> None:
+        """Unload WhisperX model and alignment models from GPU to free VRAM.
+
+        Call this after transcription is complete and no more requests are expected
+        (e.g., after batch processing or when the pipeline server needs to free
+        memory for another model like the LLM).
+        """
+        import gc
+        freed = False
+        if self._model is not None:
+            del self._model
+            self._model = None
+            freed = True
+        if self._align_models:
+            self._align_models.clear()
+            freed = True
+        if self._diarize_pipeline is not None:
+            del self._diarize_pipeline
+            self._diarize_pipeline = None
+            freed = True
+        if freed:
+            gc.collect()
+            if self.device == "cuda":
+                import torch
+                torch.cuda.empty_cache()
+            logger.info("whisperx: model unloaded, GPU memory freed")
+
     def _load_diarize_pipeline(self) -> None:
         """Lazy-load the pyannote diarization pipeline."""
         if self._diarize_pipeline is not None:

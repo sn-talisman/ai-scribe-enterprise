@@ -86,35 +86,35 @@ export const fetchSamples = (mode?: string) =>
 export const fetchSample = (id: string) =>
   get<SampleDetail>(`/encounters/${id}`);
 
-export const fetchNote = (id: string, version = "v7") =>
+export const fetchNote = (id: string, version = "latest") =>
   get<{ content: string }>(`/encounters/${id}/note`, { version });
 
-export const fetchComparison = (id: string, version = "v7") =>
+export const fetchComparison = (id: string, version = "latest") =>
   get<{ content: string }>(`/encounters/${id}/comparison`, { version });
 
 export const fetchGoldNote = (id: string) =>
   get<{ content: string }>(`/encounters/${id}/gold`);
 
-export const fetchSampleQuality = (id: string, version = "v7") =>
+export const fetchSampleQuality = (id: string, version = "latest") =>
   get<QualityScore & { sample_id: string }>(`/encounters/${id}/quality`, { version });
 
-export const fetchTranscript = (id: string, version = "v7") =>
+export const fetchTranscript = (id: string, version = "latest") =>
   get<{ content: string; versions: string[] }>(`/encounters/${id}/transcript`, { version });
 
 export const fetchAudioUrl = (id: string): string =>
   `${BASE}/encounters/${id}/audio`;
 
 // Quality
-export const fetchAggregate = (version = "v7") =>
+export const fetchAggregate = (version = "latest") =>
   get<AggregateQuality>("/quality/aggregate", { version });
 
 export const fetchTrend = () =>
   get<{ trend: AggregateQuality[] }>("/quality/trend");
 
-export const fetchDimensions = (version = "v7") =>
+export const fetchDimensions = (version = "latest") =>
   get<DimensionScore[]>("/quality/dimensions", { version });
 
-export const fetchSampleScores = (version = "v7", mode?: string) =>
+export const fetchSampleScores = (version = "latest", mode?: string) =>
   get<Array<QualityScore & { sample_id: string; mode: string; version: string }>>(
     "/quality/samples",
     mode ? { version, mode } : { version }
@@ -130,10 +130,10 @@ export interface ProviderQuality {
   max: number;
 }
 
-export const fetchQualityByMode = (version = "v7") =>
+export const fetchQualityByMode = (version = "latest") =>
   get<Record<string, AggregateQuality>>("/quality/by-mode", { version });
 
-export const fetchQualityByProvider = (version = "v7") =>
+export const fetchQualityByProvider = (version = "latest") =>
   get<ProviderQuality[]>("/quality/by-provider", { version });
 
 // Providers

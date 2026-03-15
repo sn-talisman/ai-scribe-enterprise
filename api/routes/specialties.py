@@ -115,7 +115,7 @@ def audit_consistency():
     known_specialties.add("general")  # soap_default uses "general" — no dictionary needed
 
     # Check templates
-    template_dir = Path("config/templates")
+    from api.routes.templates import TEMPLATE_DIR as template_dir, PROVIDER_DIR as provider_dir
     if template_dir.exists():
         for tf in template_dir.glob("*.yaml"):
             with open(tf) as f:
@@ -131,7 +131,6 @@ def audit_consistency():
                 })
 
     # Check providers
-    provider_dir = Path("config/providers")
     if provider_dir.exists():
         for pf in provider_dir.glob("*.yaml"):
             with open(pf) as f:

@@ -18,18 +18,20 @@ interface Props {
 
 export default async function SampleDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { version = "v7" } = await searchParams;
+  const { version: versionParam } = await searchParams;
 
-  const [detail, note, comparison, gold, quality, transcript] = await Promise.allSettled([
-    fetchSample(id),
+  // Fetch sample detail first to determine latest version
+  const sampleDetail = await fetchSample(id).catch(() => null);
+  const version = versionParam ?? sampleDetail?.latest_version ?? sampleDetail?.versions?.[sampleDetail.versions.length - 1] ?? "latest";
+
+  const [, note, comparison, gold, quality, transcript] = await Promise.allSettled([
+    Promise.resolve(null),
     fetchNote(id, version),
     fetchComparison(id, version),
     fetchGoldNote(id),
     fetchSampleQuality(id, version),
     fetchTranscript(id, version),
   ]);
-
-  const sampleDetail = detail.status === "fulfilled" ? detail.value : null;
   const noteContent = note.status === "fulfilled" ? note.value.content : null;
   const compContent = comparison.status === "fulfilled" ? comparison.value.content : null;
   const goldContent = gold.status === "fulfilled" ? gold.value.content : null;
@@ -77,7 +79,7 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
         <div className="flex flex-col items-end gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-400">Version:</span>
-            {(sampleDetail?.versions ?? ["v7"]).map((v) => (
+            {(sampleDetail?.versions ?? [version]).map((v) => (
               <a
                 key={v}
                 href={`/samples/${id}?version=${v}`}
@@ -135,7 +137,7 @@ export default async function SampleDetailPage({ params, searchParams }: Props) 
       <SampleDetailTabs
         sampleId={id}
         version={version}
-        availableVersions={sampleDetail?.versions ?? ["v7"]}
+        availableVersions={sampleDetail?.versions ?? [version]}
         note={noteContent}
         comparison={compContent}
         gold={goldContent}

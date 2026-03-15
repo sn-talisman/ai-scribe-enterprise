@@ -31,12 +31,9 @@ import yaml
 
 from config.paths import ROOT, OUTPUT_DIR, DATA_DIR, PROVIDERS_DIR
 
-_KNOWN_VERSIONS = ["v7", "v6", "v5", "v4", "v3", "v2", "v1"]
-
-
 def _discover_versions() -> list[str]:
-    """Return all known versions (highest first), scanning output/ for any beyond the hardcoded set."""
-    found: set[int] = {int(v[1:]) for v in _KNOWN_VERSIONS}
+    """Return all versions found in output/ (highest first), purely from scanning files."""
+    found: set[int] = set()
     if OUTPUT_DIR.exists():
         for mode_dir in OUTPUT_DIR.iterdir():
             if not mode_dir.is_dir():
@@ -60,15 +57,21 @@ def get_versions() -> list[str]:
 
 
 def get_latest_version() -> str:
-    """Return the highest version string found, defaulting to 'v7'."""
+    """Return the highest version string found dynamically, or 'v1' if no output exists."""
     versions = get_versions()
-    return versions[0] if versions else "v7"
+    return versions[0] if versions else "v1"
 
 
-# Keep module-level aliases for default parameter values in route signatures.
-# These are only used as *defaults* — the actual version lists are always
-# discovered dynamically per-request inside the functions themselves.
-LATEST_VERSION = "v7"
+def resolve_version(version: str) -> str:
+    """Resolve 'latest' to the actual latest version string. Pass-through for explicit versions."""
+    if version == "latest":
+        return get_latest_version()
+    return version
+
+
+# Sentinel used as default parameter in route signatures.
+# Routes call resolve_version() to turn this into the real latest version.
+LATEST_VERSION = "latest"
 
 def _discover_sample_versions(out_dir: Path) -> list[str]:
     """Return versions available in a specific sample output directory (highest first)."""
@@ -194,6 +197,7 @@ def _has_gold(sample_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_generated_note(sample_id: str, version: str = LATEST_VERSION) -> Optional[str]:
+    version = resolve_version(version)
     out_dir = _output_dir_for(sample_id)
     if out_dir is None:
         return None
@@ -203,6 +207,7 @@ def get_generated_note(sample_id: str, version: str = LATEST_VERSION) -> Optiona
 
 def get_transcript(sample_id: str, version: str = LATEST_VERSION) -> Optional[str]:
     """Return the standalone transcript text for a sample + version."""
+    version = resolve_version(version)
     out_dir = _output_dir_for(sample_id)
     if out_dir is None:
         return None
@@ -271,6 +276,7 @@ def get_audio_paths(sample_id: str) -> dict[str, Optional[str]]:
 
 
 def get_comparison(sample_id: str, version: str = LATEST_VERSION) -> Optional[str]:
+    version = resolve_version(version)
     out_dir = _output_dir_for(sample_id)
     if out_dir is None:
         return None
@@ -363,8 +369,17 @@ def get_mode(sample_id: str) -> str:
 _quality_cache: dict[str, dict] = {}
 
 
+def clear_quality_cache(version: str | None = None) -> None:
+    """Invalidate quality report cache. Call after quality sweep generates new reports."""
+    if version:
+        _quality_cache.pop(version, None)
+    else:
+        _quality_cache.clear()
+
+
 def _parse_quality_report(version: str = LATEST_VERSION) -> dict[str, dict]:
     """Parse output/quality_report_{version}.md → {sample_id: {scores}}."""
+    version = resolve_version(version)
     if version in _quality_cache:
         return _quality_cache[version]
 
@@ -402,12 +417,14 @@ def _parse_quality_report(version: str = LATEST_VERSION) -> dict[str, dict]:
 
 
 def _get_sample_scores(sample_id: str, version: str = LATEST_VERSION) -> Optional[dict]:
+    version = resolve_version(version)
     scores = _parse_quality_report(version)
     return scores.get(sample_id)
 
 
 def get_aggregate_quality(version: str = LATEST_VERSION) -> dict:
     """Return aggregate quality stats for all samples."""
+    version = resolve_version(version)
     scores_map = _parse_quality_report(version)
     if not scores_map:
         return {}
@@ -444,6 +461,7 @@ def get_quality_by_version() -> list[dict]:
 
 def get_aggregate_quality_by_mode(version: str = LATEST_VERSION) -> dict:
     """Return aggregate quality stats broken down by dictation vs ambient."""
+    version = resolve_version(version)
     scores_map = _parse_quality_report(version)
     if not scores_map:
         return {}
@@ -479,6 +497,7 @@ def get_aggregate_quality_by_mode(version: str = LATEST_VERSION) -> dict:
 
 def get_aggregate_quality_by_provider(version: str = LATEST_VERSION) -> list[dict]:
     """Return aggregate quality per provider."""
+    version = resolve_version(version)
     scores_map = _parse_quality_report(version)
     if not scores_map:
         return []
@@ -513,6 +532,7 @@ def get_aggregate_quality_by_provider(version: str = LATEST_VERSION) -> list[dic
 
 def get_all_sample_scores(version: str = LATEST_VERSION) -> list[dict]:
     """Return per-sample scores as a list for the samples table."""
+    version = resolve_version(version)
     scores_map = _parse_quality_report(version)
     result = []
     for sample_id, scores in scores_map.items():
@@ -530,6 +550,7 @@ _batch_cache: dict[str, dict] = {}
 
 def get_batch_stats(version: str = LATEST_VERSION) -> dict:
     """Parse output/batch_report_{version}.md for pipeline stats."""
+    version = resolve_version(version)
     if version in _batch_cache:
         return _batch_cache[version]
 
@@ -616,8 +637,8 @@ def list_providers() -> list[dict]:
                     "quality_scores": {},
                 })
 
-    # Attach avg quality scores for all providers from quality report
-    scores_map = _parse_quality_report(get_latest_version())
+    # Attach avg quality scores for all providers from latest quality report
+    scores_map = _parse_quality_report("latest")
     if scores_map:
         samples_list = list_samples()
         for provider in result:

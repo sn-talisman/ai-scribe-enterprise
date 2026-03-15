@@ -318,6 +318,21 @@ class EngineRegistry:
             if (engine_type, self._server_type(engine_type, name)) in _SERVER_MAP
         ]
 
+    def unload_engine(self, engine_type: str, server_name: str | None = None) -> None:
+        """Unload a cached engine instance and free its resources (e.g., GPU memory).
+
+        If the engine has an ``unload_model`` method (e.g., WhisperXServer), it is
+        called before removing the instance from the cache.
+        """
+        name = server_name or self._default_server(engine_type)
+        cache_key = (engine_type, name)
+        engine = self._cache.pop(cache_key, None)
+        if engine is None:
+            return
+        if hasattr(engine, "unload_model"):
+            engine.unload_model()
+        log.info("registry: unloaded %s/%s", engine_type, name)
+
     def list_cached(self) -> list[tuple[str, str]]:
         """List currently instantiated (engine_type, server_name) pairs."""
         return list(self._cache.keys())

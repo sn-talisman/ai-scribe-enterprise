@@ -13,14 +13,17 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
-  const [agg, trendData, dims, samples, byMode, byProvider] = await Promise.all([
-    fetchAggregate("v7").catch(() => null),
+  const [rawAgg, trendData, dims, samples, byMode, byProvider] = await Promise.all([
+    fetchAggregate("latest").catch(() => null),
     fetchTrend().catch(() => ({ trend: [] })),
-    fetchDimensions("v7").catch(() => []),
+    fetchDimensions("latest").catch(() => []),
     fetchSamples().catch(() => []),
-    fetchQualityByMode("v7").catch(() => ({})),
-    fetchQualityByProvider("v7").catch(() => []),
+    fetchQualityByMode("latest").catch(() => ({})),
+    fetchQualityByProvider("latest").catch(() => []),
   ]);
+
+  // Guard against empty aggregate ({} from API when no quality data exists)
+  const agg = rawAgg && typeof rawAgg.average === "number" ? rawAgg : null;
 
   const modeData = byMode as Record<string, typeof agg>;
   const dictationAgg = modeData?.["dictation"] ?? null;
@@ -35,20 +38,20 @@ export default async function Dashboard() {
     },
     {
       label: "Avg Quality Score",
-      value: agg ? `${agg.average.toFixed(2)} / 5.0` : "—",
+      value: agg?.average != null ? `${agg.average.toFixed(2)} / 5.0` : "—",
       sub: `${agg?.sample_count ?? 0} samples evaluated`,
       color: "var(--brand-indigo)",
     },
     {
       label: "Dictation Avg",
-      value: dictationAgg ? `${dictationAgg.average.toFixed(2)} / 5.0` : "—",
-      sub: dictationAgg ? `${dictationAgg.sample_count} samples` : "no data",
+      value: dictationAgg?.average != null ? `${dictationAgg.average.toFixed(2)} / 5.0` : "—",
+      sub: dictationAgg?.sample_count ? `${dictationAgg.sample_count} samples` : "no data",
       color: "#6366F1",
     },
     {
       label: "Ambient Avg",
-      value: ambientAgg ? `${ambientAgg.average.toFixed(2)} / 5.0` : "—",
-      sub: ambientAgg ? `${ambientAgg.sample_count} samples` : "no data",
+      value: ambientAgg?.average != null ? `${ambientAgg.average.toFixed(2)} / 5.0` : "—",
+      sub: ambientAgg?.sample_count ? `${ambientAgg.sample_count} samples` : "no data",
       color: "#10B981",
     },
   ];
@@ -65,7 +68,7 @@ export default async function Dashboard() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-gray-500 text-sm mt-1">
-          AI Scribe pipeline quality overview · v7 · {byProvider.length} providers
+          AI Scribe pipeline quality overview · {agg?.version ?? "—"} · {byProvider.length} providers
         </p>
       </div>
 
@@ -128,8 +131,8 @@ export default async function Dashboard() {
                     <td className="px-4 py-3">
                       <ScoreBadge score={pq.average} />
                     </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{pq.min.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{pq.max.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs">{pq.min?.toFixed(2) ?? "—"}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs">{pq.max?.toFixed(2) ?? "—"}</td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/providers/${pq.provider_id}`}

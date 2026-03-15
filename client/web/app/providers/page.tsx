@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function ProvidersPage() {
   const [providers, providerQuality] = await Promise.all([
     fetchProviders().catch(() => []),
-    fetchQualityByProvider("v7").catch(() => []),
+    fetchQualityByProvider("latest").catch(() => []),
   ]);
 
   // Merge quality data into providers
@@ -71,10 +71,10 @@ export default async function ProvidersPage() {
                     {pq.sample_count} samples
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-gray-50">
-                    min {pq.min.toFixed(2)}
+                    min {pq.min?.toFixed(2) ?? "—"}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-gray-50">
-                    max {pq.max.toFixed(2)}
+                    max {pq.max?.toFixed(2) ?? "—"}
                   </span>
                 </div>
               )}

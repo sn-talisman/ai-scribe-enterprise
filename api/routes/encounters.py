@@ -429,7 +429,7 @@ async def _proxy_pipeline_run(
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        version = status.get("version", "v8")
+        version = status.get("version", "latest")
 
         try:
             note_data = await proxy_get_note(sample_id, version)
@@ -517,33 +517,72 @@ async def _run_pipeline_async(
 
         final = await asyncio.to_thread(run_encounter, graph, state)
 
+        # Free ASR model from GPU memory before quality evaluation
+        try:
+            from mcp_servers.registry import get_registry
+            get_registry().unload_engine("asr")
+        except Exception:
+            pass
+
         await manager.send_progress(encounter_id, "transcribe", 50, "Transcription complete")
 
         # Save outputs
         out_path = Path(output_dir)
+
+        # Detect next version dynamically
+        from api.data_loader import _discover_sample_versions, get_latest_version
+        existing = _discover_sample_versions(out_path)
+        if existing:
+            next_num = max(int(v[1:]) for v in existing) + 1
+        else:
+            latest = get_latest_version()
+            next_num = int(latest[1:]) + 1 if latest != "v1" else 1
+        pipeline_version = f"v{next_num}"
 
         # Save generated note
         if final.final_note:
             from output.markdown_writer import write_clinical_note
             write_clinical_note(
                 final,
-                path=out_path / "generated_note_v7.md",
-                version="v7",
+                path=out_path / f"generated_note_{pipeline_version}.md",
+                version=pipeline_version,
                 sample_id=sample_id,
             )
             await manager.send_progress(encounter_id, "note", 80, "Clinical note generated")
 
         # Save standalone transcript
         if final.transcript and final.transcript.full_text.strip():
-            transcript_path = out_path / "audio_transcript_v7.txt"
+            transcript_path = out_path / f"audio_transcript_{pipeline_version}.txt"
             transcript_path.write_text(final.transcript.full_text.strip())
             await manager.send_progress(encounter_id, "note", 85, "Transcript saved")
 
-        await manager.send_progress(encounter_id, "delivery", 95, "Finalizing...")
+        # Run quality evaluation if gold standard exists
+        await manager.send_progress(encounter_id, "quality", 90, "Running quality evaluation...")
+        try:
+            from api.quality_runner import evaluate_sample
+            gold = dl.get_gold_note(sample_id)
+            gen_text = final.final_note if isinstance(final.final_note, str) else (out_path / f"generated_note_{pipeline_version}.md").read_text() if (out_path / f"generated_note_{pipeline_version}.md").exists() else ""
+            tx_text = final.transcript.full_text.strip() if final.transcript else ""
+            if gold:
+                await asyncio.to_thread(
+                    evaluate_sample,
+                    sample_id=sample_id,
+                    generated_note=gen_text,
+                    gold_note=gold,
+                    transcript=tx_text,
+                    version=pipeline_version,
+                    output_dir=out_path,
+                )
+                await manager.send_progress(encounter_id, "quality", 95, "Quality evaluation complete")
+        except Exception as qe:
+            logger.warning("quality_eval_skipped", encounter_id=encounter_id, error=str(qe))
+
+        await manager.send_progress(encounter_id, "delivery", 98, "Finalizing...")
 
         # Update in-memory state
         enc["status"] = "complete"
-        enc["message"] = "Pipeline complete — note generated"
+        enc["message"] = f"Pipeline complete — {pipeline_version} generated"
+        enc["version"] = pipeline_version
 
         await manager.send_complete(encounter_id, sample_id)
 
@@ -602,7 +641,12 @@ async def rerun_pipeline(sample_id: str):
          if f.stem.split("_v")[1].isdigit()],
         reverse=True,
     )
-    next_version_num = (existing_versions[0] + 1) if existing_versions else 8
+    if existing_versions:
+        next_version_num = existing_versions[0] + 1
+    else:
+        # No existing output — use global latest + 1
+        latest = dl.get_latest_version()
+        next_version_num = int(latest[1:]) + 1 if latest != "v1" else 1
     next_version = f"v{next_version_num}"
 
     # Determine mode
@@ -730,6 +774,13 @@ async def _run_rerun_pipeline(
 
         final = await asyncio.to_thread(run_encounter, graph, state)
 
+        # Free ASR model from GPU memory before quality evaluation
+        try:
+            from mcp_servers.registry import get_registry
+            get_registry().unload_engine("asr")
+        except Exception:
+            pass
+
         await manager.send_progress(encounter_id, "transcribe", 50, "Transcription complete")
 
         out_path = Path(output_dir)
@@ -749,7 +800,28 @@ async def _run_rerun_pipeline(
             transcript_path.write_text(final.transcript.full_text.strip())
             await manager.send_progress(encounter_id, "note", 85, "Transcript saved")
 
-        await manager.send_progress(encounter_id, "delivery", 95, "Finalizing...")
+        # Run quality evaluation if gold standard exists
+        await manager.send_progress(encounter_id, "quality", 90, "Running quality evaluation...")
+        try:
+            from api.quality_runner import evaluate_sample
+            gold = dl.get_gold_note(sample_id)
+            gen_text = (out_path / f"generated_note_{version}.md").read_text() if (out_path / f"generated_note_{version}.md").exists() else ""
+            tx_text = final.transcript.full_text.strip() if final.transcript else ""
+            if gold:
+                await asyncio.to_thread(
+                    evaluate_sample,
+                    sample_id=sample_id,
+                    generated_note=gen_text,
+                    gold_note=gold,
+                    transcript=tx_text,
+                    version=version,
+                    output_dir=out_path,
+                )
+                await manager.send_progress(encounter_id, "quality", 95, "Quality evaluation complete")
+        except Exception as qe:
+            logger.warning("quality_eval_skipped", encounter_id=encounter_id, error=str(qe))
+
+        await manager.send_progress(encounter_id, "delivery", 98, "Finalizing...")
 
         enc["status"] = "complete"
         enc["message"] = f"Pipeline complete — {version} generated"

@@ -3,7 +3,9 @@ api/routes/quality.py
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+import asyncio
+
+from fastapi import APIRouter, BackgroundTasks, Query
 
 from api import data_loader as dl
 
@@ -68,3 +70,19 @@ def get_quality_by_provider(version: str = Query(dl.LATEST_VERSION)):
 def get_batch_stats(version: str):
     """Pipeline batch run stats (timing, ASR confidence, etc.)."""
     return dl.get_batch_stats(version)
+
+
+@router.post("/sweep/{version}")
+async def trigger_quality_sweep(version: str, background_tasks: BackgroundTasks):
+    """Trigger a quality evaluation sweep for all samples at a given version.
+
+    Runs asynchronously in the background. Generates per-sample quality reports
+    and the aggregate quality_report_{version}.md file.
+    """
+    from api.quality_runner import generate_aggregate_report
+    background_tasks.add_task(generate_aggregate_report, version)
+    return {
+        "status": "started",
+        "version": version,
+        "message": f"Quality sweep for {version} started in background",
+    }

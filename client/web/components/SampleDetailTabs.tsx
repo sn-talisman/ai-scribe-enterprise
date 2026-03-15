@@ -196,8 +196,8 @@ export default function SampleDetailTabs({
   }, [txVersion, sampleId, version, initialTranscript]);
 
   // Compare tab
-  const [diffLeft, setDiffLeft] = useState(availableVersions[1] ?? availableVersions[0] ?? "v6");
-  const [diffRight, setDiffRight] = useState(availableVersions[0] ?? "v7");
+  const [diffLeft, setDiffLeft] = useState(availableVersions[1] ?? availableVersions[0] ?? "latest");
+  const [diffRight, setDiffRight] = useState(availableVersions[0] ?? "latest");
   const [leftContent, setLeftContent] = useState<string | null>(null);
   const [rightContent, setRightContent] = useState<string | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);

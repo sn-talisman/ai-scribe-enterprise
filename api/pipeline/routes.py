@@ -100,33 +100,21 @@ class OutputListResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 def _get_pipeline_data_dir() -> Path:
-    """Return the data directory for the pipeline server."""
-    cfg = get_deployment_config()
-    from config.paths import ROOT
-    return ROOT / cfg.data.processing_pipeline.data_dir
+    """Return the data directory for this server role (resolved by config/paths.py)."""
+    from config.paths import DATA_DIR
+    return DATA_DIR
 
 
 def _get_pipeline_output_dir() -> Path:
-    """Return the output directory for the pipeline server."""
-    cfg = get_deployment_config()
-    from config.paths import ROOT
-    # In "both" mode, use standard output dir
-    if cfg.role.value == "both":
-        from config.paths import OUTPUT_DIR
-        return OUTPUT_DIR
-    return ROOT / cfg.data.processing_pipeline.output_dir
+    """Return the output directory for this server role (resolved by config/paths.py)."""
+    from config.paths import OUTPUT_DIR
+    return OUTPUT_DIR
 
 
 def _find_sample_dirs(sample_id: str) -> tuple[Path | None, Path | None, str, str]:
     """Find data and output directories for a sample. Returns (data_dir, output_dir, mode, physician)."""
     data_root = _get_pipeline_data_dir()
     output_root = _get_pipeline_output_dir()
-
-    # In "both" mode, also check standard data dir
-    cfg = get_deployment_config()
-    if cfg.role.value == "both":
-        from config.paths import DATA_DIR
-        data_root = DATA_DIR
 
     for mode_dir in ["dictation", "conversation"]:
         mode_path = data_root / mode_dir
@@ -163,11 +151,7 @@ async def upload_encounter(
     """
     require_feature("run_pipeline")
 
-    cfg = get_deployment_config()
     data_root = _get_pipeline_data_dir()
-    if cfg.role.value == "both":
-        from config.paths import DATA_DIR
-        data_root = DATA_DIR
 
     data_mode = "conversation" if mode == "ambient" else mode
     encounter_dir = data_root / data_mode / provider_id / sample_id
@@ -259,7 +243,12 @@ async def trigger_pipeline(job_id: str, req: PipelineTriggerRequest | None = Non
              if f.stem.split("_v")[1].isdigit()],
             reverse=True,
         )
-        next_num = (existing[0] + 1) if existing else 8
+        if existing:
+            next_num = existing[0] + 1
+        else:
+            from api.data_loader import get_latest_version
+            latest = get_latest_version()
+            next_num = int(latest[1:]) + 1 if latest != "v1" else 1
         version = f"v{next_num}"
 
     job["status"] = "processing"
@@ -356,6 +345,13 @@ async def _run_pipeline(
 
         final = await asyncio.to_thread(run_encounter, graph, state)
 
+        # Free ASR model from GPU memory before LLM quality evaluation
+        try:
+            from mcp_servers.registry import get_registry
+            get_registry().unload_engine("asr")
+        except Exception:
+            pass  # Non-critical — just memory optimization
+
         job["pct"] = 50
         job["message"] = "Transcription complete"
 
@@ -378,6 +374,32 @@ async def _run_pipeline(
             transcript_path.write_text(final.transcript.full_text.strip())
             job["pct"] = 85
             job["message"] = "Transcript saved"
+
+        # Run quality evaluation if gold standard exists
+        job["stage"] = "quality"
+        job["pct"] = 90
+        job["message"] = "Running quality evaluation..."
+
+        try:
+            from api.quality_runner import evaluate_sample
+            from api.data_loader import get_gold_note
+
+            gold = get_gold_note(sample_id)
+            gen_text = (out_path / f"generated_note_{version}.md").read_text() if (out_path / f"generated_note_{version}.md").exists() else ""
+            tx_text = final.transcript.full_text.strip() if final.transcript else ""
+
+            if gold:
+                await asyncio.to_thread(
+                    evaluate_sample,
+                    sample_id=sample_id,
+                    generated_note=gen_text,
+                    gold_note=gold,
+                    transcript=tx_text,
+                    version=version,
+                    output_dir=out_path,
+                )
+        except Exception as qe:
+            logger.warning("quality_eval_skipped", job_id=job_id, error=str(qe))
 
         job["stage"] = "delivery"
         job["pct"] = 100
@@ -495,11 +517,7 @@ async def batch_upload(
     """
     require_feature("batch_processing")
 
-    cfg = get_deployment_config()
     data_root = _get_pipeline_data_dir()
-    if cfg.role.value == "both":
-        from config.paths import DATA_DIR
-        data_root = DATA_DIR
 
     try:
         items = json.loads(manifest)
@@ -555,12 +573,7 @@ async def batch_trigger(req: BatchTriggerRequest):
     """
     require_feature("batch_processing")
 
-    cfg = get_deployment_config()
     data_root = _get_pipeline_data_dir()
-    if cfg.role.value == "both":
-        from config.paths import DATA_DIR
-        data_root = DATA_DIR
-
     output_root = _get_pipeline_output_dir()
 
     # Discover samples to process
@@ -668,7 +681,13 @@ async def _run_batch(job_ids: list[str], version: str | None, two_pass: bool) ->
                  if f.stem.split("_v")[1].isdigit()],
                 reverse=True,
             )
-            next_num = (existing[0] + 1) if existing else 8
+            if existing:
+                next_num = existing[0] + 1
+            else:
+                # Use global latest version + 1
+                from api.data_loader import get_latest_version
+                latest = get_latest_version()
+                next_num = int(latest[1:]) + 1 if latest != "v1" else 1
             v = f"v{next_num}"
 
         note_audio_path = None
@@ -690,6 +709,17 @@ async def _run_batch(job_ids: list[str], version: str | None, two_pass: bool) ->
             output_dir=str(out_dir),
             version=v,
         )
+
+    # After all samples complete, generate aggregate quality report
+    final_version = version or v  # Use the version from last sample
+    if final_version:
+        try:
+            from api.quality_runner import generate_aggregate_report
+            logger.info("batch_quality_sweep_start", version=final_version)
+            await asyncio.to_thread(generate_aggregate_report, final_version)
+            logger.info("batch_quality_sweep_complete", version=final_version)
+        except Exception as qe:
+            logger.warning("batch_quality_sweep_failed", error=str(qe))
 
 
 # ---------------------------------------------------------------------------

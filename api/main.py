@@ -183,3 +183,13 @@ def get_role():
         "is_processing_pipeline": cfg.is_processing_pipeline,
         "pipeline_api_url": cfg.pipeline_api_url if cfg.is_provider_facing else None,
     }
+
+
+@app.get("/config/latest-version", tags=["config"])
+def get_latest_version():
+    """Return the latest pipeline version (dynamically discovered from output files)."""
+    from api.data_loader import get_latest_version as _glv, get_versions
+    return {
+        "latest": _glv(),
+        "versions": get_versions(),
+    }
