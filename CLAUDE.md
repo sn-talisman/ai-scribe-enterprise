@@ -1072,7 +1072,99 @@ This session builds a cross-platform mobile application for AI Scribe using Reac
 - Biometric authentication (Face ID / fingerprint)
 - EHR integration via mobile deep links
 
-### Session 14: Learning Loop + Correction Capture
+### Session 14: Production Deployment Architecture & Resource Optimization
+This session re-architects the system for production deployment where provider-facing components
+run on-prem (or on a separate server) and GPU-intensive pipeline components run on AWS. Both
+can initially be deployed on one server but configuration allows splitting across two.
+
+**Key Objective:** Support hybrid deployment (on-prem provider-facing + cloud GPU pipeline) with
+strict PHI/EHR data isolation — sensitive data NEVER leaves the provider-facing server.
+
+**a. Provider-Facing Server (CPU, on-prem or cloud)**
+Components that interact with providers, EHR systems, and serve the client-facing UI:
+
+- **3A. Client Web Server:** Serves the provider-facing web app — dashboard, physicians,
+  specialties, samples, templates (read-only). No template/provider editing (admin-only on
+  processing server). Built from the existing Next.js app with a `client` role flag.
+- **3B. Mobile API Gateway:** Serves the mobile app. May share the same server as 3A or be
+  separate. All mobile app API calls route through this server.
+- **3C. Provider API Server:** FastAPI backend that:
+  - Exposes APIs to fetch data from local EHR and provider-specific resources
+  - Proxies pipeline trigger requests (transcription, note generation) to the processing server
+  - Retrieves generated transcripts and SOAP notes from the processing server
+  - Periodically syncs templates and provider details from the processing server (every 2 hours)
+  - Serves synced template/provider data to the frontend
+  - Supports async pipeline progress tracking (WebSocket forwarding)
+  - **PHI isolation:** EHR data is accessed locally and NEVER sent to the processing server.
+    Only audio files and de-identified encounter metadata are sent for processing.
+- **3D. Data Sync & Storage:**
+  - Audio files and samples stored locally in the standard folder structure
+  - Generated outputs (transcripts, notes) stored in local `output/` folders for web/mobile serving
+  - Sync script copies audio + encounter data to the processing server for batch processing
+  - Sync script copies generated outputs back from the processing server
+  - Supports both on-demand (single encounter) and batch sync modes
+  - File overwrite policy: only overwrite if source timestamp > local timestamp
+
+**b. Processing Pipeline Server (GPU, AWS)**
+Components that run GPU-intensive AI workloads and admin operations:
+
+- **4A. Pipeline Engine:** Transcription and note generation pipeline (LangGraph). Triggered
+  on-demand or batch. Reads from standard input folders (audio, demographics, encounter details,
+  gold standard). Produces transcripts and clinical notes.
+- **4B. Pipeline API Server:** FastAPI backend that:
+  - Accepts file uploads from the provider-facing server into the correct folder structure
+  - Triggers pipeline execution (single or batch)
+  - Supports async progress tracking and result retrieval
+  - Batch upload: handles large volumes; skips files where local timestamp >= uploaded timestamp
+  - Batch retrieval: serves generated output files back to the provider-facing server
+- **4C. Admin Web Server:** Full-featured web UI with all current capabilities plus:
+  - Create/edit/delete specialties, templates, providers
+  - Dashboard with quality metrics, pipeline monitoring
+  - Used by Talisman to manage the practice and its providers
+
+**c. Configuration & Deployment**
+- **`config/deployment.yaml`:** Central deployment config specifying:
+  - Server roles (`provider-facing`, `processing-pipeline`, or `both`)
+  - Network addresses for each server component
+  - Sync schedule (default: every 2 hours for templates/providers)
+  - Data directory paths for each server
+  - Feature flags per server role (e.g., `allow_template_edit: false` for provider-facing)
+- **Deployment scripts:** Automated setup for both server types:
+  - `deploy/setup_provider_server.sh` — installs CPU dependencies, configures nginx, systemd
+  - `deploy/setup_pipeline_server.sh` — installs GPU dependencies (CUDA, WhisperX, Ollama)
+  - `deploy/docker-compose.provider.yml` + `deploy/docker-compose.pipeline.yml`
+  - Single-server mode: one docker-compose that runs both roles
+  - Split-server mode: separate compose files with network config pointing to each other
+
+**d. Data Sync Infrastructure**
+- `scripts/sync_to_pipeline.py` — Push audio + encounter data from provider to pipeline server
+- `scripts/sync_from_pipeline.py` — Pull generated outputs from pipeline to provider server
+- `scripts/sync_templates.py` — Periodic pull of templates/providers from pipeline server
+- All sync operations use the Pipeline API (4B), not direct file access
+- Sync supports incremental transfer (timestamp comparison, skip unchanged files)
+- Batch sync with progress reporting and error recovery
+
+**e. Comprehensive Testing**
+- **Unit tests:** Every component, API endpoint, sync function, config loader
+- **Component tests:** Each web page/screen, each API route, each pipeline node
+- **Integration tests:** Provider → Pipeline server communication, sync workflows
+- **End-to-end tests:** Full workflow from audio upload → pipeline → note retrieval
+- Pre-populated test data on both servers (replicated from existing `data/` and `output/`)
+- **CI/CD test strategy:** Define test tiers (fast unit → slow E2E), run appropriate tier per change
+- Auto-commit on test pass
+
+**f. Implementation Order**
+1. `config/deployment.yaml` + config loader
+2. Split API into provider-facing + pipeline roles
+3. Pipeline API (4B) — file upload, trigger, progress, retrieval
+4. Provider API (3C) — proxy to pipeline, EHR local access, template sync
+5. Admin vs client web server role split (4C vs 3A)
+6. Data sync scripts (3D)
+7. Deployment scripts + Docker compose files
+8. Comprehensive test suite
+9. Documentation
+
+### Session 15: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
 - Classify corrections (ASR_ERROR, STYLE, CONTENT, CODING, TEMPLATE)
 - Generate training pairs for post-processor ML model
@@ -1080,7 +1172,7 @@ This session builds a cross-platform mobile application for AI Scribe using Reac
 - Feed quality evaluator with real correction data
 - Trigger ASR re-fine-tuning when enough new corrected transcripts accumulate (see Session 10f)
 
-### Session 15: S3 Trigger Pipeline (Production Ingestion)
+### Session 16: S3 Trigger Pipeline (Production Ingestion)
 - Implement S3 upload watcher: audio files uploaded to designated S3 bucket trigger pipeline
 - EventBridge rule: S3 PutObject → invoke pipeline Lambda/container
 - Pipeline reads audio from S3, processes through full graph, writes output `.md` back to S3
@@ -1102,16 +1194,16 @@ This session builds a cross-platform mobile application for AI Scribe using Reac
 - Implement `trigger/s3_handler.py` — the entry point invoked by EventBridge
 - All output files are Markdown, consistent with local pipeline output format
 
-### Session 16: Evidence-Linked Citations + Audio Recording UI
+### Session 17: Evidence-Linked Citations + Audio Recording UI
 - Audio indexer: word-level timestamp mapping for citation links
 - Citation metadata embedded in note Markdown (link note sentences → audio timestamps)
 - Offline audio buffering strategy for client-side capture (IndexedDB ring buffer)
 
-### Session 17: Browser Extension (Super Fill MVP)
+### Session 18: Browser Extension (Super Fill MVP)
 - Chrome MV3 extension scaffold
 - EHR detection, field mapping, note injection
 
-### Sessions 18+: Advanced features (coding suggestions, patient summaries, voice commands)
+### Sessions 19+: Advanced features (coding suggestions, patient summaries, voice commands)
 
 ## Coding Standards
 

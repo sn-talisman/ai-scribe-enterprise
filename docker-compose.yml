@@ -1,7 +1,16 @@
+# docker-compose.yml — Single-server deployment (both roles)
+#
+# Runs both provider-facing and processing-pipeline roles on one machine.
+# This is the default development/single-server mode.
+#
+# For split deployment, use:
+#   deploy/docker-compose.provider.yml   (provider-facing server)
+#   deploy/docker-compose.pipeline.yml   (processing pipeline server)
+
 version: "3.9"
 
 services:
-  # ── FastAPI backend ────────────────────────────────────────────────────────
+  # ── FastAPI backend (both roles) ─────────────────────────────────────
   api:
     build:
       context: .
@@ -9,14 +18,18 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./output:/app/output:ro
-      - ./data:/app/data:ro
-      - ./config:/app/config:ro
+      - ./ai-scribe-data:/app/ai-scribe-data
+      - ./output:/app/output
+      - ./config:/app/config
     environment:
+      - AI_SCRIBE_SERVER_ROLE=both
+      - AI_SCRIBE_DATA_DIR=/app/ai-scribe-data
+      - AI_SCRIBE_OUTPUT_DIR=/app/output
+      - AI_SCRIBE_CONFIG_DIR=/app/config
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
-  # ── Next.js web viewer ─────────────────────────────────────────────────────
+  # ── Next.js web viewer ───────────────────────────────────────────────
   web:
     build:
       context: ./client/web
@@ -25,11 +38,12 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_SERVER_ROLE=both
     depends_on:
       - api
     restart: unless-stopped
 
-  # ── Ollama (LLM inference) ─────────────────────────────────────────────────
+  # ── Ollama (LLM inference) ───────────────────────────────────────────
   # Uncomment to run Ollama in Docker (requires GPU passthrough)
   # ollama:
   #   image: ollama/ollama:latest

@@ -275,6 +275,40 @@ export const rerunPipeline = (sampleId: string) =>
 
 export const WS_BASE = BASE.replace(/^http/, "ws");
 
+// ---------------------------------------------------------------------------
+// Server role / feature flags
+// ---------------------------------------------------------------------------
+export interface FeatureFlags {
+  dashboard: boolean;
+  view_encounters: boolean;
+  view_providers: boolean;
+  view_specialties: boolean;
+  view_templates: boolean;
+  view_quality: boolean;
+  record_audio: boolean;
+  trigger_pipeline: boolean;
+  run_pipeline: boolean;
+  batch_processing: boolean;
+  ehr_access: boolean;
+  patient_search: boolean;
+  create_providers: boolean;
+  edit_providers: boolean;
+  create_templates: boolean;
+  edit_templates: boolean;
+  create_specialties: boolean;
+  edit_specialties: boolean;
+}
+
+export interface ServerRoleInfo {
+  role: string;
+  instance_id: string;
+  is_provider_facing: boolean;
+  is_processing_pipeline: boolean;
+}
+
+export const fetchFeatures = () => get<FeatureFlags>("/config/features");
+export const fetchServerRole = () => get<ServerRoleInfo>("/config/role");
+
 // Mutation helpers
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

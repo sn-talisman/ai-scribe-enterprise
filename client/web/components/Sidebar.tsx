@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   FileText,
@@ -11,19 +12,48 @@ import {
   Activity,
   Stethoscope,
   ClipboardList,
+  Server,
+  Shield,
 } from "lucide-react";
+import { fetchFeatures, type FeatureFlags, fetchServerRole } from "@/lib/api";
 
-const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/samples", label: "Samples", icon: FileText },
-  { href: "/providers", label: "Providers", icon: Users },
-  { href: "/specialties", label: "Specialties", icon: Stethoscope },
-  { href: "/templates", label: "Templates", icon: ClipboardList },
-  { href: "/capture", label: "Capture", icon: Mic },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+  requiredFeature?: keyof FeatureFlags;
+}
+
+const ALL_NAV: NavItem[] = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, requiredFeature: "dashboard" },
+  { href: "/samples", label: "Samples", icon: FileText, requiredFeature: "view_encounters" },
+  { href: "/providers", label: "Providers", icon: Users, requiredFeature: "view_providers" },
+  { href: "/specialties", label: "Specialties", icon: Stethoscope, requiredFeature: "view_specialties" },
+  { href: "/templates", label: "Templates", icon: ClipboardList, requiredFeature: "view_templates" },
+  { href: "/capture", label: "Capture", icon: Mic, requiredFeature: "record_audio" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [features, setFeatures] = useState<FeatureFlags | null>(null);
+  const [role, setRole] = useState<string>("both");
+
+  useEffect(() => {
+    fetchFeatures().then(setFeatures).catch(() => {});
+    fetchServerRole().then((r) => setRole(r.role)).catch(() => {});
+  }, []);
+
+  // While loading, show all nav items (prevents flash of empty sidebar)
+  const nav = features
+    ? ALL_NAV.filter((item) => !item.requiredFeature || features[item.requiredFeature])
+    : ALL_NAV;
+
+  const roleLabel =
+    role === "provider-facing" ? "Provider" :
+    role === "processing-pipeline" ? "Admin" :
+    "Dev";
+
+  const RoleIcon = role === "provider-facing" ? Shield : Server;
 
   return (
     <aside
@@ -47,9 +77,19 @@ export default function Sidebar() {
         </div>
       </div>
 
+      {/* Server role badge */}
+      <div className="px-5 py-2 border-b border-white/10">
+        <div className="flex items-center gap-2">
+          <RoleIcon size={12} className="text-indigo-400" />
+          <span className="text-white/50 text-xs font-medium uppercase tracking-wider">
+            {roleLabel} Server
+          </span>
+        </div>
+      </div>
+
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {nav.map(({ href, label, icon: Icon }) => {
           const active =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
