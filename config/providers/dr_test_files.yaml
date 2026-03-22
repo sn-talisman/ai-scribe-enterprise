@@ -4,7 +4,7 @@ credentials: TEST
 custom_vocabulary: []
 id: dr_test_files
 llm_override: null
-name: "[TEST] dr_test_files"
+name: "Test Provider (Files)"
 noise_suppression_level: moderate
 note_format: SOAP
 npi: ''

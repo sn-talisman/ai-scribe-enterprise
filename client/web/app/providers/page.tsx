@@ -55,12 +55,12 @@ export default async function ProvidersPage() {
                 <ScoreBadge score={pq?.average ?? p.latest_score} />
               </div>
               <div className="font-semibold text-gray-900 text-sm">
-                {(p.name ?? p.id).includes("[TEST]") && (
+                {(p.credentials === "TEST" || p.id.includes("test")) && (
                   <span className="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 align-middle">
                     TEST
                   </span>
                 )}
-                {(p.name ?? p.id).replace("[TEST] ", "")}
+                {p.name ?? p.id}
                 {p.credentials && (
                   <span className="text-gray-400 font-normal ml-1 text-xs">
                     {p.credentials}
