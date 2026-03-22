@@ -34,7 +34,7 @@ AI Scribe runs as two server roles from a single codebase:
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Development mode:** `role: "both"` runs everything in one process on port 8000.
+**Development:** Run two instances on the same machine — one provider-facing on port 8000, one pipeline on port 8100.
 
 | | Provider-Facing | Pipeline |
 |---|---|---|
@@ -139,13 +139,16 @@ cp .env.example .env
 # Set HF_TOKEN (required for pyannote diarization)
 source .env
 
-# 4. Start the API (both roles, dev mode)
-uvicorn api.main:app --reload --port 8000
+# 4. Start the provider-facing API
+AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --reload --port 8000
 
-# 5. Start the web UI
+# 5. Start the processing-pipeline API (separate terminal)
+AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --reload --port 8100
+
+# 6. Start the web UI
 cd client/web && npm install && npm run dev   # port 3000
 
-# 6. Start the mobile app
+# 7. Start the mobile app
 cd client/mobile && npm install && npx expo start
 ```
 

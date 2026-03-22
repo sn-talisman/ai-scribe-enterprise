@@ -342,7 +342,7 @@ async def upload_audio(
             )
         )
     else:
-        # Local mode (both / processing-pipeline): run pipeline directly
+        # processing-pipeline: run pipeline directly
         asyncio.create_task(
             _run_pipeline_async(
                 encounter_id=encounter_id,

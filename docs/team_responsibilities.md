@@ -267,18 +267,11 @@ Team B owns the feature flag system. Team A uses `require_feature()` in any new 
 
 ## Development Workflow
 
-### Both Teams (dev mode)
+### Development Setup
 
-For local development, run with `role: "both"` — everything in one process:
-```bash
-uvicorn api.main:app --reload --port 8000
-cd client/web && npm run dev           # port 3000
-cd client/mobile && npx expo start     # Expo dev server
-```
+For local development, run two instances on the same machine:
 
-### Testing Split Mode
-
-To test the two-server split on one machine:
+### Two Instances (same machine)
 ```bash
 # Terminal 1: Team A's server
 AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --port 8000

@@ -7,7 +7,7 @@ processing pipeline server's API. This keeps the pipeline execution
 on the GPU server while the provider-facing server handles the
 client-facing interface.
 
-In "both" mode, no proxying is needed — the request runs locally.
+In processing-pipeline mode, no proxying is needed — the request runs locally.
 """
 from __future__ import annotations
 

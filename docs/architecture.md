@@ -60,9 +60,9 @@ AI Scribe Enterprise is deployed as **two server roles** from a single codebase:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Development mode:** Set `role: "both"` in `config/deployment.yaml` — both roles run in a single process on port 8000 with all features enabled, no proxy or sync needed.
+**Development:** Run two instances on the same machine — one provider-facing on port 8000, one pipeline on port 8100. Each instance uses the `AI_SCRIBE_SERVER_ROLE` env var.
 
-**Production mode:** Each server runs with its own role via `AI_SCRIBE_SERVER_ROLE` env var. The provider-facing server proxies pipeline operations to the GPU server and periodically syncs config back.
+**Production:** Each server runs on its own machine with its own role. The provider-facing server proxies pipeline operations to the GPU server and periodically syncs config back.
 
 > For detailed team-specific documentation, see [docs/dual_server_guide.md](dual_server_guide.md).
 
@@ -99,8 +99,9 @@ AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --port 8000
 # Processing-pipeline server
 AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --port 8100
 
-# Development (both roles in one process)
-uvicorn api.main:app --reload --port 8000
+# Development (two instances on the same machine)
+AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --reload --port 8000
+AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --reload --port 8100
 ```
 
 The role drives two resolution chains:

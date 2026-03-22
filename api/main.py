@@ -4,18 +4,14 @@ api/main.py — FastAPI application entry point (role-aware).
 The server role is determined by config/deployment.yaml or the
 AI_SCRIBE_SERVER_ROLE environment variable:
 
-  - "both" (default)           — All routes enabled, single-server dev mode
   - "provider-facing"          — Client UI, EHR access, proxies to pipeline server
   - "processing-pipeline"      — Pipeline API, admin UI, GPU workloads
 
 Start with:
-    # Default (both roles):
-    uvicorn api.main:app --reload --port 8000
-
-    # Provider-facing only:
+    # Provider-facing server:
     AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --port 8000
 
-    # Processing pipeline only:
+    # Processing pipeline server:
     AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --port 8100
 """
 from __future__ import annotations
@@ -47,14 +43,14 @@ async def lifespan(app: FastAPI):
     log.info("ai_scribe_api_starting", role=cfg.role.value, instance=cfg.instance_id)
 
     # Start config sync on provider-facing server
-    if cfg.is_provider_facing and cfg.role != ServerRole.BOTH:
+    if cfg.is_provider_facing:
         from api.sync import start_config_sync
         await start_config_sync()
 
     yield
 
     # Cleanup
-    if cfg.is_provider_facing and cfg.role != ServerRole.BOTH:
+    if cfg.is_provider_facing:
         from api.sync import stop_config_sync
         await stop_config_sync()
         from api.proxy import close
@@ -121,26 +117,19 @@ app.include_router(session_events.router)
 
 # Provider-facing routes: patients (EHR), providers (read)
 if cfg.is_provider_facing:
-    from api.routes import patients, providers
+    from api.routes import patients, providers, specialties, templates
     app.include_router(patients.router)
     app.include_router(providers.router)
+    app.include_router(specialties.router)
+    app.include_router(templates.router)
 
 # Processing pipeline routes: pipeline API, admin CRUD
 if cfg.is_processing_pipeline:
     from api.pipeline.routes import router as pipeline_router
+    from api.routes import providers as admin_providers
     from api.routes import specialties, templates
     app.include_router(pipeline_router)
-    app.include_router(specialties.router)
-    app.include_router(templates.router)
-
-    # In "both" mode, providers already included above
-    if cfg.role == ServerRole.PROCESSING_PIPELINE:
-        from api.routes import providers as admin_providers
-        app.include_router(admin_providers.router)
-
-# Provider-facing in split mode: include read-only specialties/templates
-if cfg.role == ServerRole.PROVIDER_FACING:
-    from api.routes import specialties, templates
+    app.include_router(admin_providers.router)
     app.include_router(specialties.router)
     app.include_router(templates.router)
 

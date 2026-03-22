@@ -35,7 +35,7 @@ def setup(tmp_path):
     env = {
         "AI_SCRIBE_DATA_DIR": str(data_dir),
         "AI_SCRIBE_OUTPUT_DIR": str(output_dir),
-        "AI_SCRIBE_SERVER_ROLE": "both",
+        "AI_SCRIBE_SERVER_ROLE": "provider-facing",
     }
     with patch.dict(os.environ, env):
         import config.paths
@@ -160,7 +160,7 @@ class TestDashboardFlow:
         with patch.dict(os.environ, {
             "AI_SCRIBE_DATA_DIR": str(data_dir),
             "AI_SCRIBE_OUTPUT_DIR": str(output_dir),
-            "AI_SCRIBE_SERVER_ROLE": "both",
+            "AI_SCRIBE_SERVER_ROLE": "provider-facing",
         }):
             import config.paths
             importlib.reload(config.paths)

@@ -36,7 +36,7 @@ const ALL_NAV: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [features, setFeatures] = useState<FeatureFlags | null>(null);
-  const [role, setRole] = useState<string>("both");
+  const [role, setRole] = useState<string>("provider-facing");
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {});
@@ -51,7 +51,7 @@ export default function Sidebar() {
   const roleLabel =
     role === "provider-facing" ? "Provider" :
     role === "processing-pipeline" ? "Admin" :
-    "Dev";
+    "Provider";
 
   const RoleIcon = role === "provider-facing" ? Shield : Server;
 

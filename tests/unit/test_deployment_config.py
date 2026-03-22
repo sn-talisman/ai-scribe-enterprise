@@ -27,14 +27,9 @@ from config.deployment import (
 # DeploymentConfig model tests
 # ---------------------------------------------------------------------------
 class TestDeploymentConfig:
-    def test_default_role_is_both(self):
+    def test_default_role_is_provider_facing(self):
         cfg = DeploymentConfig()
-        assert cfg.role == ServerRole.BOTH
-
-    def test_is_provider_facing_for_both(self):
-        cfg = DeploymentConfig(role=ServerRole.BOTH)
-        assert cfg.is_provider_facing is True
-        assert cfg.is_processing_pipeline is True
+        assert cfg.role == ServerRole.PROVIDER_FACING
 
     def test_is_provider_facing_only(self):
         cfg = DeploymentConfig(role=ServerRole.PROVIDER_FACING)
@@ -53,10 +48,6 @@ class TestDeploymentConfig:
     def test_api_port_processing_pipeline(self):
         cfg = DeploymentConfig(role=ServerRole.PROCESSING_PIPELINE)
         assert cfg.api_port == 8100
-
-    def test_api_port_both(self):
-        cfg = DeploymentConfig(role=ServerRole.BOTH)
-        assert cfg.api_port == 8000
 
     def test_pipeline_api_url(self):
         cfg = DeploymentConfig()
@@ -90,14 +81,19 @@ class TestFeatureFlags:
         assert flags.ehr_access is False
         assert flags.patient_search is False
 
-    def test_both_merges_all_features(self):
-        cfg = DeploymentConfig(role=ServerRole.BOTH)
+    def test_provider_facing_does_not_have_pipeline_features(self):
+        cfg = DeploymentConfig(role=ServerRole.PROVIDER_FACING)
         flags = cfg.active_features
-        # All features enabled in both mode
         assert flags.ehr_access is True
+        assert flags.run_pipeline is False
+        assert flags.create_providers is False
+
+    def test_processing_pipeline_does_not_have_ehr_features(self):
+        cfg = DeploymentConfig(role=ServerRole.PROCESSING_PIPELINE)
+        flags = cfg.active_features
+        assert flags.ehr_access is False
         assert flags.run_pipeline is True
         assert flags.create_providers is True
-        assert flags.record_audio is True
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +103,7 @@ class TestFlattenYaml:
     def test_empty_yaml(self):
         result = _flatten_yaml({})
         cfg = DeploymentConfig(**result)
-        assert cfg.role == ServerRole.BOTH
+        assert cfg.role == ServerRole.PROVIDER_FACING
 
     def test_role_from_yaml(self):
         raw = {"server": {"role": "provider-facing"}}
@@ -144,7 +140,7 @@ class TestGetDeploymentConfig:
     def test_loads_from_default_path(self):
         """Test that the config loads from config/deployment.yaml."""
         cfg = get_deployment_config(reload=True)
-        assert cfg.role == ServerRole.BOTH  # default in deployment.yaml
+        assert cfg.role == ServerRole.PROVIDER_FACING  # default in deployment.yaml
 
     def test_env_var_role_override(self):
         """Test that AI_SCRIBE_SERVER_ROLE env var overrides YAML."""
@@ -172,8 +168,8 @@ class TestGetDeploymentConfig:
 # ---------------------------------------------------------------------------
 class TestRequireFeature:
     def test_allowed_feature_passes(self):
-        """In 'both' mode, all features should be enabled."""
-        get_deployment_config(reload=True)  # Reset to "both"
+        """In provider-facing mode, view features should be enabled."""
+        get_deployment_config(reload=True)  # Reset to provider-facing
         # Should not raise
         require_feature("dashboard")
         require_feature("view_encounters")

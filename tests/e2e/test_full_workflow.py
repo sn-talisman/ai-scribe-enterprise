@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def reset_config():
-    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "both"}):
+    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "provider-facing"}):
         from config.deployment import get_deployment_config
         get_deployment_config(reload=True)
         yield
@@ -43,32 +43,40 @@ def client():
 class TestServerDeploymentModes:
     """Test that the server correctly configures itself for each role."""
 
-    def test_both_mode_has_all_routes(self, client):
-        """In 'both' mode, all API routes should be accessible."""
-        # Core routes
+    def test_provider_facing_has_provider_routes(self, client):
+        """Provider-facing server should have encounter, provider, and patient routes."""
         assert client.get("/encounters").status_code == 200
         assert client.get("/providers").status_code == 200
         assert client.get("/specialties").status_code == 200
         assert client.get("/templates").status_code == 200
         assert client.get("/quality/aggregate").status_code == 200
         assert client.get("/patients/search").status_code == 200
-
-        # Pipeline routes
-        assert client.get("/pipeline/status/fake").status_code == 404  # Route exists, job doesn't
-
-        # Config routes
         assert client.get("/config/features").status_code == 200
         assert client.get("/config/role").status_code == 200
 
-    def test_features_reflect_role(self, client):
+    def test_features_reflect_provider_facing_role(self, client):
         features = client.get("/config/features").json()
-        # In "both" mode, all should be enabled
-        for key, val in features.items():
-            assert val is True, f"Feature {key} should be True in 'both' mode"
+        assert features["ehr_access"] is True
+        assert features["patient_search"] is True
+        assert features["run_pipeline"] is False
+        assert features["create_providers"] is False
 
 
 class TestPipelineAPIWorkflow:
     """Test the pipeline API upload → trigger → status → output flow."""
+
+    @pytest.fixture
+    def client(self):
+        """Pipeline tests need the processing-pipeline role."""
+        with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "processing-pipeline"}):
+            from config.deployment import get_deployment_config
+            get_deployment_config(reload=True)
+            import importlib
+            import api.main
+            importlib.reload(api.main)
+            yield TestClient(api.main.app)
+        from config.deployment import get_deployment_config
+        get_deployment_config(reload=True)
 
     def test_upload_and_status(self, client):
         """Upload encounter files and check status."""

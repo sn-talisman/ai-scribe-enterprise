@@ -1,16 +1,16 @@
 # config/deployment.yaml — Deployment configuration for AI Scribe Enterprise
 #
 # Defines server roles, network addresses, sync schedules, and feature flags.
-# Both servers can run on the same machine (default) or be split across two.
+# For development, run two instances on the same machine — one provider-facing
+# on port 8000, one pipeline on port 8100.
 #
 # Server roles:
 #   "provider-facing"     — Client web/mobile UI, EHR access, proxies to pipeline
 #   "processing-pipeline" — GPU pipeline, admin UI, template/provider management
-#   "both"                — Single-server deployment (default, development mode)
 
 server:
   # Which role this server instance plays
-  role: "both"  # "provider-facing" | "processing-pipeline" | "both"
+  role: "provider-facing"  # "provider-facing" | "processing-pipeline"
 
   # Unique identifier for this server instance (used in logs, sync tracking)
   instance_id: "ai-scribe-dev-01"

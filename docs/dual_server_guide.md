@@ -2,7 +2,7 @@
 
 This document describes how AI Scribe Enterprise is split across two server roles. Each section tells one team exactly what their server owns, what APIs it exposes, how it communicates with the other server, and where the code lives.
 
-> **Development mode:** Both roles run on the same machine with `role: "both"` in `config/deployment.yaml`. No proxy or sync is needed — all routes are mounted, all features enabled, single `uvicorn` process on port 8000.
+> **Development:** Run two instances on the same machine — one provider-facing on port 8000, one pipeline on port 8100. Use the `AI_SCRIBE_SERVER_ROLE` env var for each process.
 
 ---
 
@@ -498,7 +498,7 @@ This is the central deployment configuration file. Key sections:
 
 ```yaml
 server:
-  role: "both"                    # "provider-facing" | "processing-pipeline" | "both"
+  role: "provider-facing"          # "provider-facing" | "processing-pipeline"
   instance_id: "ai-scribe-dev-01"
 
 network:
@@ -539,10 +539,10 @@ features:
 
 The Python module that loads and validates the YAML config:
 
-- `ServerRole` enum: `PROVIDER_FACING`, `PROCESSING_PIPELINE`, `BOTH`
+- `ServerRole` enum: `PROVIDER_FACING`, `PROCESSING_PIPELINE`
 - `DeploymentConfig` Pydantic model with convenience properties:
-  - `is_provider_facing` / `is_processing_pipeline` — True for `BOTH`
-  - `active_features` — merged feature flags based on role
+  - `is_provider_facing` / `is_processing_pipeline` — exactly one is True
+  - `active_features` — feature flags for the current role
   - `api_port` / `web_port` — correct port for the current role
   - `pipeline_api_url` — URL to reach the pipeline server
 - `get_deployment_config()` — singleton loader, supports env var overrides
@@ -560,22 +560,7 @@ The Python module that loads and validates the YAML config:
 
 ## 6. Development Setup
 
-### Single Machine (default)
-
-```bash
-# Both roles in one process — simplest for development
-uvicorn api.main:app --reload --port 8000
-
-# Web UI
-cd client/web && npm run dev    # port 3000
-
-# Mobile
-cd client/mobile && npx expo start
-```
-
-All features enabled. No proxy, no sync. `config/deployment.yaml` has `role: "both"`.
-
-### Split Mode (two terminals, same machine)
+### Single Machine (two instances, same machine)
 
 ```bash
 # Terminal 1: Provider-facing server

@@ -1,17 +1,16 @@
-# docker-compose.yml — Single-server deployment (both roles)
+# docker-compose.yml — Development deployment (two server instances on one machine)
 #
-# Runs both provider-facing and processing-pipeline roles on one machine.
-# This is the default development/single-server mode.
+# Runs provider-facing and processing-pipeline as separate services.
 #
-# For split deployment, use:
+# For split deployment across machines, use:
 #   deploy/docker-compose.provider.yml   (provider-facing server)
 #   deploy/docker-compose.pipeline.yml   (processing pipeline server)
 
 version: "3.9"
 
 services:
-  # ── FastAPI backend (both roles) ─────────────────────────────────────
-  api:
+  # ── Provider-facing API (port 8000) ─────────────────────────────────
+  api-provider:
     build:
       context: .
       dockerfile: deploy/Dockerfile.api
@@ -22,14 +21,33 @@ services:
       - ./output:/app/output
       - ./config:/app/config
     environment:
-      - AI_SCRIBE_SERVER_ROLE=both
+      - AI_SCRIBE_SERVER_ROLE=provider-facing
       - AI_SCRIBE_DATA_DIR=/app/ai-scribe-data
       - AI_SCRIBE_OUTPUT_DIR=/app/output
       - AI_SCRIBE_CONFIG_DIR=/app/config
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 
-  # ── Next.js web viewer ───────────────────────────────────────────────
+  # ── Processing-pipeline API (port 8100) ─────────────────────────────
+  api-pipeline:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./pipeline-data:/app/pipeline-data
+      - ./pipeline-output:/app/pipeline-output
+      - ./config:/app/config
+    environment:
+      - AI_SCRIBE_SERVER_ROLE=processing-pipeline
+      - AI_SCRIBE_DATA_DIR=/app/pipeline-data
+      - AI_SCRIBE_OUTPUT_DIR=/app/pipeline-output
+      - AI_SCRIBE_CONFIG_DIR=/app/config
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # ── Provider web portal (port 3000) ─────────────────────────────────
   web:
     build:
       context: ./client/web
@@ -38,9 +56,9 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_SERVER_ROLE=both
+      - NEXT_PUBLIC_SERVER_ROLE=provider-facing
     depends_on:
-      - api
+      - api-provider
     restart: unless-stopped
 
   # ── Ollama (LLM inference) ───────────────────────────────────────────

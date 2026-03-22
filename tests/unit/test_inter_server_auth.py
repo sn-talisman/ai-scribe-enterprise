@@ -145,7 +145,7 @@ class TestAuthMiddlewareDisabled:
         assert resp.status_code == 404
 
     def test_health_accessible(self):
-        client = _make_client("both", auth_enabled=False)
+        client = _make_client("provider-facing", auth_enabled=False)
         resp = client.get("/health")
         assert resp.status_code == 200
 
@@ -185,16 +185,26 @@ class TestFeatureFlagEnforcement:
             # Should not raise
             require_feature("run_pipeline")
 
-    def test_both_mode_has_all_features(self):
-        """Both mode should have all features enabled."""
+    def test_processing_pipeline_has_pipeline_features(self):
+        """Processing pipeline should have pipeline features enabled."""
         from config.deployment import require_feature
 
-        with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "both"}):
+        with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "processing-pipeline"}):
             import config.deployment
             config.deployment._config = None
             config.deployment.get_deployment_config(reload=True)
 
-            # None of these should raise
+            # These should not raise
             require_feature("run_pipeline")
-            require_feature("ehr_access")
             require_feature("batch_processing")
+
+    def test_provider_facing_has_ehr_features(self):
+        """Provider-facing should have EHR features enabled."""
+        from config.deployment import require_feature
+
+        with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "provider-facing"}):
+            import config.deployment
+            config.deployment._config = None
+            config.deployment.get_deployment_config(reload=True)
+
+            require_feature("ehr_access")

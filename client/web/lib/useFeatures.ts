@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { fetchFeatures, type FeatureFlags } from "@/lib/api";
 
-// Default features: everything enabled (matches "both" mode)
+// Default features: everything enabled (fallback before server responds)
 const ALL_ENABLED: FeatureFlags = {
   dashboard: true,
   view_encounters: true,

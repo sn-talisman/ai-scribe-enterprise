@@ -30,7 +30,6 @@ from pydantic import BaseModel, Field
 class ServerRole(str, Enum):
     PROVIDER_FACING = "provider-facing"
     PROCESSING_PIPELINE = "processing-pipeline"
-    BOTH = "both"
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +162,7 @@ class GPUConfig(BaseModel):
 # Top-level deployment config
 # ---------------------------------------------------------------------------
 class DeploymentConfig(BaseModel):
-    role: ServerRole = ServerRole.BOTH
+    role: ServerRole = ServerRole.PROVIDER_FACING
     instance_id: str = "ai-scribe-dev-01"
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     data: DataConfig = Field(default_factory=DataConfig)
@@ -177,22 +176,16 @@ class DeploymentConfig(BaseModel):
 
     @property
     def is_provider_facing(self) -> bool:
-        return self.role in (ServerRole.PROVIDER_FACING, ServerRole.BOTH)
+        return self.role == ServerRole.PROVIDER_FACING
 
     @property
     def is_processing_pipeline(self) -> bool:
-        return self.role in (ServerRole.PROCESSING_PIPELINE, ServerRole.BOTH)
+        return self.role == ServerRole.PROCESSING_PIPELINE
 
     @property
     def active_features(self) -> FeatureFlags:
-        """Return merged feature flags based on server role."""
-        if self.role == ServerRole.BOTH:
-            # In combined mode, enable everything from both roles
-            pf = self.features.provider_facing.model_dump()
-            pp = self.features.processing_pipeline.model_dump()
-            merged = {k: pf.get(k, False) or pp.get(k, False) for k in pf}
-            return FeatureFlags(**merged)
-        elif self.role == ServerRole.PROVIDER_FACING:
+        """Return feature flags for the current server role."""
+        if self.role == ServerRole.PROVIDER_FACING:
             return self.features.provider_facing
         else:
             return self.features.processing_pipeline
@@ -235,7 +228,7 @@ def _flatten_yaml(raw: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
     server = raw.get("server", {})
-    result["role"] = server.get("role", "both")
+    result["role"] = server.get("role", "provider-facing")
     result["instance_id"] = server.get("instance_id", "ai-scribe-dev-01")
 
     if "network" in raw:

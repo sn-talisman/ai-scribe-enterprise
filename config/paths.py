@@ -41,31 +41,42 @@ def _resolve_data_dirs() -> tuple[Path, Path]:
     if env_data and env_output:
         return Path(env_data), Path(env_output)
 
-    # Check deployment config for role-specific paths
+    # Determine role from env var or YAML config
     role = os.environ.get("AI_SCRIBE_SERVER_ROLE", "").strip()
-    if role:
+    if not role:
         try:
             import yaml
             config_path = CONFIG_DIR / "deployment.yaml"
             if config_path.exists():
                 with open(config_path) as f:
                     raw = yaml.safe_load(f) or {}
-                data_section = raw.get("data", {})
-
-                if role == "processing-pipeline":
-                    pp = data_section.get("processing_pipeline", {})
-                    data_dir = ROOT / pp.get("data_dir", "pipeline-data")
-                    output_dir = ROOT / pp.get("output_dir", "pipeline-output")
-                    return data_dir, output_dir
-                elif role == "provider-facing":
-                    pf = data_section.get("provider_facing", {})
-                    data_dir = ROOT / pf.get("data_dir", "ai-scribe-data")
-                    output_dir = ROOT / pf.get("output_dir", "output")
-                    return data_dir, output_dir
+                role = raw.get("server", {}).get("role", "provider-facing")
         except Exception:
-            pass  # Fall through to defaults
+            role = "provider-facing"
 
-    # Defaults (no role or config)
+    # Resolve paths based on role
+    try:
+        import yaml
+        config_path = CONFIG_DIR / "deployment.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                raw = yaml.safe_load(f) or {}
+            data_section = raw.get("data", {})
+
+            if role == "processing-pipeline":
+                pp = data_section.get("processing_pipeline", {})
+                data_dir = ROOT / pp.get("data_dir", "pipeline-data")
+                output_dir = ROOT / pp.get("output_dir", "pipeline-output")
+                return data_dir, output_dir
+            else:
+                pf = data_section.get("provider_facing", {})
+                data_dir = ROOT / pf.get("data_dir", "ai-scribe-data")
+                output_dir = ROOT / pf.get("output_dir", "output")
+                return data_dir, output_dir
+    except Exception:
+        pass  # Fall through to defaults
+
+    # Defaults
     data_default = ROOT / "ai-scribe-data"
     output_default = ROOT / "output"
     return (

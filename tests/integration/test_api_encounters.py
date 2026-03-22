@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def reset_config():
-    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "both"}):
+    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "provider-facing"}):
         from config.deployment import get_deployment_config
         get_deployment_config(reload=True)
         yield

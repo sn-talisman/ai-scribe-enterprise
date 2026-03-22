@@ -28,7 +28,7 @@ async def start_config_sync() -> None:
     global _sync_task
     cfg = get_deployment_config()
 
-    # Only run on provider-facing server (not in "both" mode — config is local)
+    # Only run on provider-facing server
     if cfg.role != ServerRole.PROVIDER_FACING:
         logger.info("config_sync_skipped", reason=f"role={cfg.role.value}")
         return

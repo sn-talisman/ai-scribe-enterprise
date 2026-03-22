@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def reset_config():
-    """Ensure 'both' mode and reset config."""
-    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "both"}):
+    """Ensure processing-pipeline mode and reset config."""
+    with patch.dict(os.environ, {"AI_SCRIBE_SERVER_ROLE": "processing-pipeline"}):
         from config.deployment import get_deployment_config
         get_deployment_config(reload=True)
         yield

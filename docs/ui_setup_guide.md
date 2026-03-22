@@ -12,12 +12,9 @@ Before starting any UI, ensure the backend API is running:
 cd /home/sanket/code/ai-scribe-enterprise
 source .venv/bin/activate
 
-# Development mode (both roles in one process):
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-
-# OR split mode (two terminals):
-AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --host 0.0.0.0 --port 8000
-AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --host 0.0.0.0 --port 8100
+# Two terminals — one for each server role:
+AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --reload --host 0.0.0.0 --port 8100
 ```
 
 Verify the API is running:
@@ -331,36 +328,7 @@ The app now routes all API calls through the tunnel. The tunnel URLs are ephemer
 
 ## 7. Running Everything Together
 
-### Development mode (single machine, all-in-one)
-
-Open 4 terminals:
-
-```bash
-# Terminal 1: Backend API (both roles)
-cd /home/sanket/code/ai-scribe-enterprise
-source .venv/bin/activate
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Terminal 2: Admin Web UI
-cd /home/sanket/code/ai-scribe-enterprise/client/web
-NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev -- --port 3100
-
-# Terminal 3: Provider Web Portal
-cd /home/sanket/code/ai-scribe-enterprise/client/provider
-NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev -- --port 3000
-
-# Terminal 4: Mobile App
-cd /home/sanket/code/ai-scribe-enterprise/client/mobile
-npx expo start
-```
-
-**Result:**
-- Admin UI at **http://localhost:3100** (full CRUD)
-- Provider Portal at **http://localhost:3000** (read-only)
-- Mobile app via QR code (connects to port 8000 on LAN IP)
-- All three hit the same API on port 8000 (both roles enabled)
-
-### Split-server mode (production-like)
+### Development mode (single machine, two API instances)
 
 Open 6 terminals:
 
@@ -368,12 +336,12 @@ Open 6 terminals:
 # Terminal 1: Provider-facing API
 cd /home/sanket/code/ai-scribe-enterprise
 source .venv/bin/activate
-AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --host 0.0.0.0 --port 8000
+AI_SCRIBE_SERVER_ROLE=provider-facing uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Terminal 2: Processing-pipeline API
 cd /home/sanket/code/ai-scribe-enterprise
 source .venv/bin/activate
-AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --host 0.0.0.0 --port 8100
+AI_SCRIBE_SERVER_ROLE=processing-pipeline uvicorn api.main:app --reload --host 0.0.0.0 --port 8100
 
 # Terminal 3: Admin Web UI → pipeline API
 cd /home/sanket/code/ai-scribe-enterprise/client/web
@@ -390,6 +358,11 @@ npx expo start
 # Terminal 6: Ollama (if not already running as a service)
 ollama serve
 ```
+
+**Result:**
+- Admin UI at **http://localhost:3100** (full CRUD, connects to pipeline API)
+- Provider Portal at **http://localhost:3000** (read-only, connects to provider-facing API)
+- Mobile app via QR code (connects to port 8000 on LAN IP)
 
 ---
 
@@ -445,7 +418,7 @@ kill -9 <PID>
 |----------|-------|---------|---------|
 | `NEXT_PUBLIC_API_URL` | `client/web/.env.local` | `http://localhost:8000` | API URL for admin web UI |
 | `NEXT_PUBLIC_API_URL` | `client/provider/.env.local` | `http://localhost:8000` | API URL for provider portal |
-| `AI_SCRIBE_SERVER_ROLE` | Backend process | `both` | Server role: `provider-facing`, `processing-pipeline`, `both` |
+| `AI_SCRIBE_SERVER_ROLE` | Backend process | `provider-facing` | Server role: `provider-facing` or `processing-pipeline` |
 | `AI_SCRIBE_INTER_SERVER_SECRET` | Backend process | (none) | Shared secret for inter-server auth |
 | `HF_TOKEN` | Backend process | (required) | HuggingFace token for pyannote diarization |
 
