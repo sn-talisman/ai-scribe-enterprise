@@ -196,6 +196,33 @@ class TestEncountersEndpoints:
         resp = client.get("/encounters/missing/quality", params={"version": "v1"})
         assert resp.status_code == 404
 
+    def test_get_versions(self, client, mock_env):
+        data_dir, output_dir = mock_env
+        _create_sample(output_dir, data_dir, "dictation", "dr_smith", "s1", ["v5", "v9"])
+        resp = client.get("/encounters/s1/versions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["sample_id"] == "s1"
+        assert "v9" in data["versions"]
+        assert "v5" in data["versions"]
+
+    def test_versions_not_found(self, client):
+        resp = client.get("/encounters/nonexistent/versions")
+        assert resp.status_code == 404
+
+    def test_is_test_flag_on_test_samples(self, client, mock_env):
+        """Test samples must have is_test=True so the UI can badge them."""
+        data_dir, output_dir = mock_env
+        _create_sample(output_dir, data_dir, "dictation", "dr_test", "test_sample_001", ["v9"])
+        _create_sample(output_dir, data_dir, "dictation", "dr_smith", "real_sample_001", ["v9"])
+        resp = client.get("/encounters")
+        assert resp.status_code == 200
+        samples = resp.json()
+        test_sample = next(s for s in samples if s["sample_id"] == "test_sample_001")
+        real_sample = next(s for s in samples if s["sample_id"] == "real_sample_001")
+        assert test_sample["is_test"] is True, "Test sample must have is_test=True"
+        assert real_sample["is_test"] is False, "Real sample must have is_test=False"
+
 
 # ── Quality endpoints ──
 
@@ -230,6 +257,35 @@ class TestQualityEndpoints:
         data = resp.json()
         assert data["average"] == 4.5
         assert data["sample_count"] == 1
+
+    def test_quality_scores_populated_on_samples(self, client, mock_env):
+        """Samples with a quality report must have quality scores in the list response.
+        This catches the bug where pipeline-output/ had notes but no quality report."""
+        data_dir, output_dir = mock_env
+        _create_sample(output_dir, data_dir, "dictation", "dr_a", "s1", ["v9"])
+        self._write_quality_report(output_dir, "v9")
+        import api.data_loader
+        api.data_loader._quality_cache.clear()
+        resp = client.get("/encounters")
+        assert resp.status_code == 200
+        samples = resp.json()
+        s1 = next(s for s in samples if s["sample_id"] == "s1")
+        assert s1["quality"] is not None, "Sample with quality report must have quality scores"
+        assert s1["quality"]["overall"] == 4.5, "Quality overall score must match report"
+        assert s1["quality"]["accuracy"] == 4.5
+        assert s1["quality"]["no_hallucination"] == 5.0
+
+    def test_quality_scores_none_without_report(self, client, mock_env):
+        """Samples without a quality report must have quality=None, not empty dict."""
+        data_dir, output_dir = mock_env
+        _create_sample(output_dir, data_dir, "dictation", "dr_a", "s1", ["v9"])
+        # No quality report written
+        import api.data_loader
+        api.data_loader._quality_cache.clear()
+        resp = client.get("/encounters")
+        samples = resp.json()
+        s1 = next(s for s in samples if s["sample_id"] == "s1")
+        assert s1["quality"] is None, "Sample without quality report must have quality=None"
 
     def test_aggregate_latest_resolves(self, client, mock_env):
         data_dir, output_dir = mock_env

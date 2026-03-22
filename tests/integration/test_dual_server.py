@@ -146,6 +146,124 @@ class TestSharedEndpoints:
         assert resp2.json()["status"] == "ok"
 
 
+class TestDataIntegrity:
+    """Verify that both server roles return populated data, not just 200 OK.
+
+    These tests catch the class of bug where an endpoint returns 200 but
+    with empty quality scores, missing fields, or null data that the UI
+    needs to render correctly.
+    """
+
+    def _populate_server(self, data_dir: Path, output_dir: Path, sample_id: str = "s1"):
+        """Create a sample with notes AND quality report in a server's directories."""
+        import json
+        mode = "dictation"
+        physician = "dr_test_integrity"
+
+        # Output dir: generated note + transcript
+        out_enc = output_dir / mode / physician / sample_id
+        out_enc.mkdir(parents=True, exist_ok=True)
+        (out_enc / "generated_note_v9.md").write_text("# Note v9\nSOAP content")
+        (out_enc / "audio_transcript_v9.txt").write_text("Transcript text")
+        (out_enc / "comparison_v9.md").write_text("# Comparison\nGold vs Generated")
+
+        # Quality report at output root
+        quality_lines = [
+            "# Report v9",
+            "",
+            "## Per-Sample Scores",
+            "",
+            "| Sample | Overall | Accuracy | Complete | No Halluc | Structure | Language | Overlap | Status |",
+            "|--------|---------|----------|----------|-----------|-----------|----------|---------|--------|",
+            f"| {sample_id} | 4.30 | 4.0 | 4.5 | 5.0 | 4.5 | 3.5 | 42% | ok |",
+        ]
+        (output_dir / "quality_report_v9.md").write_text("\n".join(quality_lines))
+
+        # Data dir: gold note + demographics
+        data_enc = data_dir / mode / physician / sample_id
+        data_enc.mkdir(parents=True, exist_ok=True)
+        (data_enc / "final_soap_note.md").write_text("# Gold Standard")
+        (data_enc / "encounter_details.json").write_text(json.dumps({
+            "mode": "dictation", "provider_id": physician, "visit_type": "follow_up",
+        }))
+
+    def test_pipeline_encounters_have_quality_scores(self, tmp_path):
+        """Pipeline server must return quality scores when quality_report exists.
+
+        This is the exact bug that was missed: pipeline-output/ had notes
+        but no quality_report_v9.md, so all scores were null.
+        """
+        data_dir = tmp_path / "pl-data"
+        output_dir = tmp_path / "pl-output"
+        data_dir.mkdir()
+        output_dir.mkdir()
+
+        self._populate_server(data_dir, output_dir, "integrity_s1")
+
+        env = {
+            "AI_SCRIBE_DATA_DIR": str(data_dir),
+            "AI_SCRIBE_OUTPUT_DIR": str(output_dir),
+            "AI_SCRIBE_SERVER_ROLE": "processing-pipeline",
+        }
+        with patch.dict(os.environ, env):
+            import config.paths, config.deployment, api.data_loader, api.main
+            importlib.reload(config.paths)
+            importlib.reload(config.deployment)
+            config.deployment.get_deployment_config(reload=True)
+            importlib.reload(api.data_loader)
+            api.data_loader._quality_cache.clear()
+            importlib.reload(api.main)
+
+            client = TestClient(api.main.app)
+            resp = client.get("/encounters")
+            assert resp.status_code == 200
+            samples = resp.json()
+            assert len(samples) > 0, "Pipeline server should list samples"
+            s = samples[0]
+            assert s["quality"] is not None, (
+                "Pipeline server encounters must have quality scores when "
+                "quality_report exists in OUTPUT_DIR"
+            )
+            assert s["quality"]["overall"] == 4.3
+            assert s["quality"]["accuracy"] == 4.0
+
+        config.deployment.get_deployment_config(reload=True)
+
+    def test_provider_encounters_have_quality_scores(self, tmp_path):
+        """Provider server must also return quality scores."""
+        data_dir = tmp_path / "pf-data"
+        output_dir = tmp_path / "pf-output"
+        data_dir.mkdir()
+        output_dir.mkdir()
+
+        self._populate_server(data_dir, output_dir, "integrity_s2")
+
+        env = {
+            "AI_SCRIBE_DATA_DIR": str(data_dir),
+            "AI_SCRIBE_OUTPUT_DIR": str(output_dir),
+            "AI_SCRIBE_SERVER_ROLE": "provider-facing",
+        }
+        with patch.dict(os.environ, env):
+            import config.paths, config.deployment, api.data_loader, api.main
+            importlib.reload(config.paths)
+            importlib.reload(config.deployment)
+            config.deployment.get_deployment_config(reload=True)
+            importlib.reload(api.data_loader)
+            api.data_loader._quality_cache.clear()
+            importlib.reload(api.main)
+
+            client = TestClient(api.main.app)
+            resp = client.get("/encounters")
+            samples = resp.json()
+            s = samples[0]
+            assert s["quality"] is not None, (
+                "Provider server encounters must have quality scores"
+            )
+            assert s["quality"]["overall"] == 4.3
+
+        config.deployment.get_deployment_config(reload=True)
+
+
 class TestLatestVersionEndpoint:
     def test_provider_returns_latest_version(self, provider_client):
         resp = provider_client.get("/config/latest-version")
