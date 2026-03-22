@@ -161,6 +161,7 @@ def list_samples() -> list[dict]:
             "latest_version": versions_available[0] if versions_available else None,
             "has_gold": has_gold,
             "quality": scores,
+            "is_test": _is_test_data(physician, sample_id),
         })
 
     # 2. Walk ai-scribe-data/ for encounters not yet in output/
@@ -179,9 +180,15 @@ def list_samples() -> list[dict]:
             "latest_version": None,
             "has_gold": has_gold,
             "quality": None,
+            "is_test": _is_test_data(physician, sample_id),
         })
 
     return samples
+
+
+def _is_test_data(physician: str, sample_id: str) -> bool:
+    """Return True if this encounter is test data (not real patient data)."""
+    return "test" in physician.lower() or "test" in sample_id.lower()
 
 
 def _has_gold(sample_id: str) -> bool:

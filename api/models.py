@@ -15,6 +15,7 @@ class SampleSummary(BaseModel):
     latest_version: Optional[str]
     has_gold: bool
     quality: Optional[dict]
+    is_test: bool = False
 
 
 class SampleDetail(BaseModel):
@@ -26,6 +27,7 @@ class SampleDetail(BaseModel):
     has_gold: bool
     quality: Optional[dict]
     patient_context: Optional[dict]
+    is_test: bool = False
 
 
 class NoteContent(BaseModel):

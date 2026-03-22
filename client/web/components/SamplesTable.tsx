@@ -139,7 +139,12 @@ export default function SamplesTable({ samples }: { samples: SampleSummary[] }) 
                 key={s.sample_id}
                 className="border-b border-gray-50 hover:bg-gray-50 transition-colors"
               >
-                <td className="px-4 py-3 text-xs text-gray-800 font-medium max-w-[160px] truncate">
+                <td className="px-4 py-3 text-xs text-gray-800 font-medium max-w-[200px] truncate">
+                  {s.is_test && (
+                    <span className="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">
+                      TEST
+                    </span>
+                  )}
                   {extractPatientName(s.sample_id)}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600 max-w-[140px] truncate">

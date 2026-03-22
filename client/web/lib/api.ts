@@ -8,6 +8,7 @@ export interface SampleSummary {
   latest_version: string | null;
   has_gold: boolean;
   quality: QualityScore | null;
+  is_test: boolean;
 }
 
 export interface SampleDetail extends SampleSummary {

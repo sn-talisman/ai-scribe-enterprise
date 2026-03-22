@@ -99,6 +99,17 @@ def get_comparison(
     return ComparisonContent(sample_id=sample_id, version=version, content=content)
 
 
+@router.get("/{sample_id}/versions")
+def get_versions(sample_id: str):
+    """Get all available versions for a sample."""
+    out_dir = dl._output_dir_for(sample_id)
+    if out_dir is None:
+        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
+    from api.data_loader import _discover_sample_versions
+    versions = _discover_sample_versions(out_dir)
+    return {"sample_id": sample_id, "versions": versions}
+
+
 @router.get("/{sample_id}/gold", response_model=GoldNoteContent)
 def get_gold_note(sample_id: str):
     """Get the gold-standard clinical note (Markdown)."""
