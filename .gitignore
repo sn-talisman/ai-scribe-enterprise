@@ -47,6 +47,9 @@ env/
 # Claude local settings
 .claude/settings.local.json
 
+# Kiro
+.kiro/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -81,6 +84,9 @@ memory/
 
 # Pytest
 .pytest_cache/
+
+# Hypothesis (property-based testing database)
+.hypothesis/
 
 # Quality experiments log (may contain PHI references)
 quality/experiments.jsonl

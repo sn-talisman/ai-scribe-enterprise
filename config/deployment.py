@@ -150,6 +150,30 @@ class InterServerAuth(BaseModel):
         return os.environ.get(self.secret_env_var)
 
 
+class EHRConfig(BaseModel):
+    adapter: str = "stub"  # "stub" | "fhir"
+    fhir_base_url: str = ""
+    fhir_vendor: str = ""  # "epic" | "cerner" | "athena"
+    fhir_client_id: str = ""
+    fhir_client_secret_env: str = "AI_SCRIBE_EHR_CLIENT_SECRET"
+    fhir_scopes: list[str] = Field(default_factory=lambda: [
+        "patient/*.read", "patient/DocumentReference.write"
+    ])
+
+
+class BrandingConfig(BaseModel):
+    practice_name: str = "AI Scribe"
+    logo_url: str = ""
+    primary_color: str = "#1a5276"
+
+
+class OutputSyncEnhanced(BaseModel):
+    websocket_enabled: bool = True
+    websocket_reconnect_interval: int = 30  # seconds
+    incremental: bool = True
+    conflict_strategy: str = "keep_both"  # "keep_both" | "keep_remote" | "keep_local"
+
+
 class GPUConfig(BaseModel):
     asr_device: str = "cuda"
     vram_budget_gb: int = 23
@@ -171,6 +195,9 @@ class DeploymentConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     inter_server_auth: InterServerAuth = Field(default_factory=InterServerAuth)
     gpu: GPUConfig = Field(default_factory=GPUConfig)
+    ehr: EHRConfig = Field(default_factory=EHRConfig)
+    output_sync_enhanced: OutputSyncEnhanced = Field(default_factory=OutputSyncEnhanced)
+    branding: BrandingConfig = Field(default_factory=BrandingConfig)
 
     # --- Convenience properties ---
 
@@ -259,6 +286,26 @@ def _flatten_yaml(raw: dict[str, Any]) -> dict[str, Any]:
             "keep_alive": str(gpu.get("llm", {}).get("keep_alive", "0")),
             "two_pass_batch": gpu.get("two_pass_batch", True),
         }
+
+    ehr = raw.get("ehr", {})
+    if ehr:
+        fhir = ehr.get("fhir", {})
+        result["ehr"] = {
+            "adapter": ehr.get("adapter", "stub"),
+            "fhir_base_url": fhir.get("base_url", ""),
+            "fhir_vendor": fhir.get("vendor", ""),
+            "fhir_client_id": fhir.get("client_id", ""),
+            "fhir_client_secret_env": fhir.get("client_secret_env", "AI_SCRIBE_EHR_CLIENT_SECRET"),
+            "fhir_scopes": fhir.get("scopes", ["patient/*.read", "patient/DocumentReference.write"]),
+        }
+
+    output_sync_enhanced = raw.get("output_sync_enhanced", {})
+    if output_sync_enhanced:
+        result["output_sync_enhanced"] = output_sync_enhanced
+
+    branding = raw.get("branding", {})
+    if branding:
+        result["branding"] = branding
 
     return result
 

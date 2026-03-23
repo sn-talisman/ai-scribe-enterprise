@@ -221,4 +221,15 @@ export const fetchEncounterStatus = (id: string) =>
     `/encounters/${id}/status`
   );
 
+// Note editing
+export const saveEditedNote = (encounterId: string, editedNote: string) =>
+  post<{ encounter_id: string; status: string }>(`/encounters/${encounterId}/note/edit`, {
+    content: editedNote,
+  });
+
+export const approveNote = (encounterId: string, editedNote: string) =>
+  post<{ encounter_id: string; status: string }>(`/encounters/${encounterId}/note/approve`, {
+    content: editedNote,
+  });
+
 export const WS_BASE = BASE.replace(/^http/, "ws");

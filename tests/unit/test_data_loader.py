@@ -212,7 +212,7 @@ class TestQualityReportParsing:
                 f"| {s.get('structure', '—')} | {s.get('language', '—')} "
                 f"| {s.get('overlap', '—')} | {s.get('status', '✓')} |"
             )
-        (output_dir / f"quality_report_{version}.md").write_text("\n".join(lines))
+        (output_dir / f"quality_report_{version}.md").write_text("\n".join(lines), encoding="utf-8")
 
     def test_parses_valid_report(self, dl, mock_dirs):
         _, output_dir = mock_dirs
@@ -247,7 +247,7 @@ class TestQualityReportParsing:
 | bad line |
 | s1 | 4.0 | 4.0 | 3.5 | 5.0 | 4.0 | 4.0 | 40% | ✓ |
 """
-        (output_dir / "quality_report_v1.md").write_text(content)
+        (output_dir / "quality_report_v1.md").write_text(content, encoding="utf-8")
         scores = dl._parse_quality_report("v1")
         assert "s1" in scores
         assert scores["s1"]["overall"] == 4.0
@@ -299,7 +299,7 @@ class TestQualityByProvider:
             "| s2 | 4.00 | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 | 40% | ✓ |",
             "| s3 | 3.50 | 3.5 | 3.5 | 3.5 | 3.5 | 3.5 | 35% | ✓ |",
         ]
-        (output_dir / "quality_report_v5.md").write_text("\n".join(lines))
+        (output_dir / "quality_report_v5.md").write_text("\n".join(lines), encoding="utf-8")
 
         result = dl.get_aggregate_quality_by_provider("v5")
         assert len(result) == 2

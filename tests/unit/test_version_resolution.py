@@ -95,7 +95,7 @@ class TestNoHardcodedVersionsInFrontend:
         )
 
     def _check_file(self, filepath: Path, issues: list):
-        content = filepath.read_text()
+        content = filepath.read_text(encoding="utf-8")
         for i, line in enumerate(content.splitlines(), 1):
             # Skip comments
             stripped = line.strip()

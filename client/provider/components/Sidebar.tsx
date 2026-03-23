@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   FileText,
@@ -9,6 +11,7 @@ import {
   Mic,
   Activity,
 } from "lucide-react";
+import { fetchBranding, DEFAULT_BRANDING, type BrandingConfig } from "@/lib/branding";
 
 interface NavItem {
   href: string;
@@ -25,6 +28,11 @@ const NAV: NavItem[] = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [branding, setBranding] = useState<BrandingConfig>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    fetchBranding().then(setBranding).catch(() => {});
+  }, []);
 
   return (
     <aside
@@ -33,15 +41,25 @@ export default function Sidebar() {
     >
       {/* Practice branding — customizable per deployment */}
       <div className="flex items-center gap-3 px-5 py-6 border-b border-white/10">
-        <div
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-          style={{ background: "var(--brand-primary)" }}
-        >
-          AI
-        </div>
+        {branding.logo_url ? (
+          <Image
+            src={branding.logo_url}
+            alt={branding.practice_name}
+            width={36}
+            height={36}
+            className="flex-shrink-0"
+          />
+        ) : (
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+            style={{ background: branding.primary_color || "var(--brand-primary)" }}
+          >
+            AI
+          </div>
+        )}
         <div>
           <div className="text-white font-semibold text-sm leading-tight">
-            AI Scribe
+            {branding.practice_name}
           </div>
           <div className="text-white/40 text-xs">Provider Portal</div>
         </div>

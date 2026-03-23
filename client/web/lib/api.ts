@@ -310,6 +310,26 @@ export interface ServerRoleInfo {
 export const fetchFeatures = () => get<FeatureFlags>("/config/features");
 export const fetchServerRole = () => get<ServerRoleInfo>("/config/role");
 
+// Branding
+export interface BrandingConfig {
+  practice_name: string;
+  logo_url: string;
+  primary_color: string;
+}
+
+export const fetchBranding = () => get<BrandingConfig>("/config/branding");
+
+// Note editing
+export const saveEditedNote = (encounterId: string, editedNote: string) =>
+  post<{ encounter_id: string; status: string }>(`/encounters/${encounterId}/note/edit`, {
+    content: editedNote,
+  });
+
+export const approveNote = (encounterId: string, editedNote: string) =>
+  post<{ encounter_id: string; status: string }>(`/encounters/${encounterId}/note/approve`, {
+    content: editedNote,
+  });
+
 // Mutation helpers
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

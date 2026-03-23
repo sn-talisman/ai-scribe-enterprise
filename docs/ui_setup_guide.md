@@ -144,7 +144,9 @@ client/provider/
 │   ├── MarkdownViewer.tsx
 │   └── ...
 ├── lib/
-│   └── api.ts                  # Read-only API client (no create/update mutations)
+│   ├── api.ts                  # Read-only API client (no create/update mutations)
+│   ├── branding.ts             # Practice branding loader (name, logo, color from API)
+│   └── diffEngine.ts           # Correction diff engine (AI note vs provider edit)
 ├── .env.local                  # API URL config
 └── package.json
 ```

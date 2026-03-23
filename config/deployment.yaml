@@ -167,3 +167,26 @@ gpu:
     keep_alive: "0"                  # Unload after each request (VRAM management)
   # Two-pass mode for batch processing (prevents OOM)
   two_pass_batch: true
+
+# ---------------------------------------------------------------------------
+# EHR integration (FHIR R4)
+# ---------------------------------------------------------------------------
+ehr:
+  # Adapter type: "stub" uses local JSON/YAML files, "fhir" connects to live EHR
+  adapter: "stub"
+  fhir:
+    base_url: ""
+    vendor: ""                       # "epic" | "cerner" | "athena"
+    client_id: ""
+    client_secret_env: "AI_SCRIBE_EHR_CLIENT_SECRET"
+    scopes:
+      - "patient/*.read"
+      - "patient/DocumentReference.write"
+
+# ---------------------------------------------------------------------------
+# Practice branding (provider-facing UI)
+# ---------------------------------------------------------------------------
+branding:
+  practice_name: "AI Scribe"         # Display name in sidebar header
+  logo_url: ""                       # URL or path to practice logo (empty = default)
+  primary_color: "#1a5276"           # Primary brand color

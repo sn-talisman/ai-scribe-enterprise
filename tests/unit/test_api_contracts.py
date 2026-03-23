@@ -237,7 +237,7 @@ class TestQualityEndpoints:
             "|--------|---------|----------|----------|-----------|-----------|----------|---------|--------|",
             "| s1 | 4.50 | 4.5 | 4.0 | 5.0 | 4.5 | 4.0 | 45% | ✓ |",
         ]
-        (output_dir / f"quality_report_{version}.md").write_text("\n".join(lines))
+        (output_dir / f"quality_report_{version}.md").write_text("\n".join(lines), encoding="utf-8")
 
     def test_aggregate_empty(self, client):
         """Dashboard should NOT crash when no quality data exists."""

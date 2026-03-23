@@ -28,6 +28,8 @@ services:
       - AI_SCRIBE_DATA_DIR=/app/ai-scribe-data
       - AI_SCRIBE_OUTPUT_DIR=/app/output
       - AI_SCRIBE_CONFIG_DIR=/app/config
+      - AI_SCRIBE_INTER_SERVER_SECRET=${AI_SCRIBE_INTER_SERVER_SECRET:-}
+      - PIPELINE_API_URL=${PIPELINE_API_URL:-http://pipeline-server:8100}
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
 

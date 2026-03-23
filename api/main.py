@@ -17,6 +17,7 @@ Start with:
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import structlog
@@ -41,6 +42,13 @@ log = structlog.get_logger()
 async def lifespan(app: FastAPI):
     cfg = get_deployment_config()
     log.info("ai_scribe_api_starting", role=cfg.role.value, instance=cfg.instance_id)
+
+    # Warn if inter-server auth is not configured (Req 6.5)
+    if not os.environ.get("AI_SCRIBE_INTER_SERVER_SECRET"):
+        log.warning(
+            "AI_SCRIBE_INTER_SERVER_SECRET is not configured — "
+            "inter-server authentication is disabled. Set this in production."
+        )
 
     # Start config sync on provider-facing server
     if cfg.is_provider_facing:
@@ -172,6 +180,12 @@ def get_role():
         "is_processing_pipeline": cfg.is_processing_pipeline,
         "pipeline_api_url": cfg.pipeline_api_url if cfg.is_provider_facing else None,
     }
+
+
+@app.get("/config/branding", tags=["config"])
+def get_branding():
+    """Return practice branding configuration."""
+    return cfg.branding.model_dump()
 
 
 @app.get("/config/latest-version", tags=["config"])

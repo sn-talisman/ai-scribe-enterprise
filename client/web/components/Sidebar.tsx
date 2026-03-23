@@ -16,6 +16,7 @@ import {
   Shield,
 } from "lucide-react";
 import { fetchFeatures, type FeatureFlags, fetchServerRole } from "@/lib/api";
+import { fetchBranding, DEFAULT_BRANDING, type BrandingConfig } from "@/lib/branding";
 
 interface NavItem {
   href: string;
@@ -37,10 +38,12 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [features, setFeatures] = useState<FeatureFlags | null>(null);
   const [role, setRole] = useState<string>("provider-facing");
+  const [branding, setBranding] = useState<BrandingConfig>(DEFAULT_BRANDING);
 
   useEffect(() => {
     fetchFeatures().then(setFeatures).catch(() => {});
     fetchServerRole().then((r) => setRole(r.role)).catch(() => {});
+    fetchBranding().then(setBranding).catch(() => {});
   }, []);
 
   // While loading, show all nav items (prevents flash of empty sidebar)
@@ -62,16 +65,26 @@ export default function Sidebar() {
     >
       {/* Logo / Brand */}
       <div className="flex items-center gap-3 px-5 py-6 border-b border-white/10">
-        <Image
-          src="/talisman-logo.svg"
-          alt="Talisman Solutions"
-          width={36}
-          height={36}
-          className="flex-shrink-0"
-        />
+        {branding.logo_url ? (
+          <Image
+            src={branding.logo_url}
+            alt={branding.practice_name}
+            width={36}
+            height={36}
+            className="flex-shrink-0"
+          />
+        ) : (
+          <Image
+            src="/talisman-logo.svg"
+            alt="AI Scribe"
+            width={36}
+            height={36}
+            className="flex-shrink-0"
+          />
+        )}
         <div>
           <div className="text-white font-semibold text-sm leading-tight">
-            Talisman Solutions
+            {branding.practice_name}
           </div>
           <div className="text-white/40 text-xs">AI Scribe Enterprise</div>
         </div>

@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import MarkdownViewer from "./MarkdownViewer";
+import NoteEditor from "./NoteEditor";
 import QualityPanel from "./QualityPanel";
 import type { QualityScore } from "@/lib/api";
-import { fetchNote, fetchTranscript } from "@/lib/api";
+import { fetchNote, fetchTranscript, saveEditedNote, approveNote } from "@/lib/api";
 
 interface Props {
   sampleId: string;
@@ -128,10 +129,12 @@ export default function SampleDetailTabs({
 }: Props) {
   const [active, setActive] = useState<TabId>("note");
 
-  // Note — version switching
+  // Note — version switching + editing
   const [noteVersion, setNoteVersion] = useState(version);
   const [noteContent, setNoteContent] = useState<string | null>(initialNote);
   const [noteLoading, setNoteLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   useEffect(() => {
     if (noteVersion === version) { setNoteContent(initialNote); return; }
@@ -207,18 +210,63 @@ export default function SampleDetailTabs({
         {active === "note" && (
           <div>
             <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-medium text-gray-700">Generated Note</span>
-              <VersionPicker
-                versions={availableVersions}
-                selected={noteVersion}
-                onChange={setNoteVersion}
-                label="Version:"
-              />
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-gray-700">Generated Note</span>
+                {saveStatus && (
+                  <span className="text-xs text-green-600 font-medium">{saveStatus}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {noteContent && !editing && (
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="px-3 py-1.5 rounded text-xs font-medium text-white bg-indigo-600 transition-colors"
+                  >
+                    Edit Note
+                  </button>
+                )}
+                {editing && (
+                  <button
+                    onClick={() => setEditing(false)}
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-slate-100 text-slate-500 transition-colors"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+                <VersionPicker
+                  versions={availableVersions}
+                  selected={noteVersion}
+                  onChange={(v) => { setNoteVersion(v); setEditing(false); }}
+                  label="Version:"
+                />
+              </div>
             </div>
             {noteLoading ? (
               <div className="text-center py-8 text-gray-400 text-sm">Loading note...</div>
             ) : noteContent ? (
-              <MarkdownViewer content={noteContent} />
+              editing ? (
+                <NoteEditor
+                  encounterId={sampleId}
+                  originalNote={noteContent}
+                  onSave={async (edited) => {
+                    try {
+                      await saveEditedNote(sampleId, edited);
+                      setSaveStatus("Saved");
+                      setTimeout(() => setSaveStatus(null), 3000);
+                    } catch { setSaveStatus("Save failed"); }
+                  }}
+                  onApprove={async (edited) => {
+                    try {
+                      await approveNote(sampleId, edited);
+                      setSaveStatus("Approved");
+                      setEditing(false);
+                      setTimeout(() => setSaveStatus(null), 3000);
+                    } catch { setSaveStatus("Approve failed"); }
+                  }}
+                />
+              ) : (
+                <MarkdownViewer content={noteContent} />
+              )
             ) : (
               <Empty msg="Generated note not available for this version." />
             )}
