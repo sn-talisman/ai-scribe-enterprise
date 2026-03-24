@@ -115,7 +115,7 @@ def _populate_test_data(data_dir: Path, output_dir: Path):
             quality_lines.append(
                 f"| {sample_id} | 4.35 | 4.5 | 4.0 | 5.0 | 4.2 | 4.0 | 42% | ✓ |"
             )
-    (output_dir / "quality_report_v9.md").write_text("\n".join(quality_lines))
+    (output_dir / "quality_report_v9.md").write_text("\n".join(quality_lines), encoding="utf-8")
 
 
 class TestDashboardFlow:
