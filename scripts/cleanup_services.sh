@@ -63,9 +63,9 @@ clean_turbopack_cache() {
 }
 
 kill_stale_node_processes() {
-    # Kill any orphaned next dev / expo processes
+    # Kill any orphaned next dev / next-server / expo processes
     local stale
-    stale=$(ps aux | grep -E 'next dev|expo start|metro' | grep -v grep | awk '{print $2}' 2>/dev/null || true)
+    stale=$(ps aux | grep -E 'next dev|next-server|expo start|metro' | grep -v grep | awk '{print $2}' 2>/dev/null || true)
     if [ -n "$stale" ]; then
         echo -e "${YELLOW}Killing stale Node.js processes: $stale${NC}"
         echo "$stale" | xargs kill -9 2>/dev/null || true

@@ -44,14 +44,6 @@ export default function CapturePage() {
   const router = useRouter();
   const features = useFeatures();
 
-  if (!features.record_audio && !features.trigger_pipeline) {
-    return (
-      <div className="p-8 text-gray-500">
-        Audio capture is not available on this server.
-      </div>
-    );
-  }
-
   // Providers
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [providerId, setProviderId] = useState("");
@@ -450,6 +442,14 @@ export default function CapturePage() {
     wsRef.current?.close();
     asrWsRef.current?.close();
   };
+
+  if (!features.record_audio && !features.trigger_pipeline) {
+    return (
+      <div className="p-8 text-gray-500">
+        Audio capture is not available on this server.
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-2xl space-y-6">
