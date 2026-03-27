@@ -115,10 +115,14 @@ app.include_router(encounters.router)
 app.include_router(quality.router)
 app.include_router(session_events.router)
 
-# Audio streaming WebSocket (pipeline server: direct, provider-facing: proxy)
+# Audio streaming: pipeline server runs NeMo directly; provider-facing proxies
 if cfg.is_processing_pipeline:
     from api.ws import audio_stream
     app.include_router(audio_stream.router)
+
+if cfg.is_provider_facing:
+    from api.ws.asr_proxy import router as asr_proxy_router
+    app.include_router(asr_proxy_router)
 
 # Provider-facing routes: patients (EHR), providers (read)
 if cfg.is_provider_facing:
