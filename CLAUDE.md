@@ -1164,7 +1164,178 @@ Components that run GPU-intensive AI workloads and admin operations:
 8. Comprehensive test suite
 9. Documentation
 
-### Session 15: Learning Loop + Correction Capture
+### Session 15: Streaming ASR — Live Transcription During Recording
+This session adds real-time transcription during audio recording, using NVIDIA's streaming ASR models. The Capture page gets a third audio mode ("Record - Live Transcription") alongside the existing "Record - Offline Transcription" and "Upload Audio" options. All pipeline stages after ASR (note generation, quality, delivery) remain unchanged.
+
+**Key Principle:** Streaming ASR is a **capture-time optimization** — it provides real-time feedback to the clinician during recording. The final transcript still flows through the same post-processing, note generation, and quality evaluation pipeline. The streaming transcript is a draft; the pipeline's output is authoritative.
+
+**a. NeMo Streaming ASR Server (`mcp_servers/asr/nemo_streaming_server.py`)**
+- Implements `ASREngine` interface from `mcp_servers/asr/base.py`
+- Wraps NVIDIA Nemotron-Speech-Streaming (nvidia/nemotron-speech-streaming-en-0.6b)
+- Cache-aware FastConformer-RNNT architecture — processes only new audio chunks, reuses cached encoder state
+- **`transcribe_stream(audio_chunk, session_id, config)`** — async generator yielding `PartialTranscript`
+  - Input: raw PCM bytes (16kHz, 16-bit, mono), 160ms chunks
+  - Output: `PartialTranscript(text, is_final, speaker, start_ms, end_ms, confidence)`
+  - `is_final=True` when sentence-complete (VAD silence or punctuation boundary)
+  - Session state cached per `session_id` — encoder hidden states persist across chunks
+- **`transcribe_batch(audio_path, config)`** — also implemented for compatibility with existing pipeline
+  - Loads full file, processes in batch mode via NeMo
+  - Returns `RawTranscript` matching WhisperX output format
+- **`get_capabilities()`** — returns `streaming=True, batch=True, diarization=False, max_speakers=1`
+- **Chunk size configuration** via `ASRConfig`:
+  - `chunk_size_ms: 160` (default — 80ms lookahead, good latency/accuracy balance)
+  - `chunk_size_ms: 560` for dictation (480ms lookahead, highest accuracy)
+  - `chunk_size_ms: 80` for ultra-low latency (0ms lookahead)
+- **VRAM:** ~2-3 GB (fits alongside WhisperX or Ollama, but not both simultaneously)
+- **Model loading:** Lazy-load on first streaming request; unload after configurable idle timeout (default 5 min)
+
+**b. NeMo Multitalker Streaming Server (`mcp_servers/asr/nemo_multitalker_server.py`)**
+- Extends NeMo streaming for **multi-speaker ambient encounters**
+- Wraps NVIDIA Multitalker-Parakeet-Streaming (nvidia/multitalker-parakeet-streaming-0.6b-v1)
+- Integrated SortFormer diarization — speaker identification in real-time without enrollment
+- **`transcribe_stream()`** — same interface, but `PartialTranscript.speaker` is populated (e.g., "SPEAKER_0", "SPEAKER_1")
+- **`get_capabilities()`** — `streaming=True, diarization=True, max_speakers=4`
+- **VRAM:** ~4-5 GB (ASR + diarization models loaded together)
+- **Use case:** Ambient mode — doctor-patient conversations with real-time speaker labels
+- **Engine selection:** ASR router selects this engine when `mode=ambient` AND `streaming=True`
+
+**c. Audio Streaming WebSocket (`api/ws/audio_stream.py`)**
+- New WebSocket endpoint: `WS /ws/asr/{encounter_id}`
+- **Protocol:**
+  ```
+  Client → Server: binary PCM audio chunks (160ms, 16kHz, mono, 16-bit signed)
+  Server → Client: JSON messages
+    { "type": "partial",  "text": "The patient presents with...", "is_final": false, "speaker": null, "confidence": 0.92 }
+    { "type": "final",    "text": "The patient presents with lower back pain.", "is_final": true, "speaker": "DOCTOR", "start_ms": 1200, "end_ms": 3400 }
+    { "type": "complete", "transcript": "Full accumulated transcript..." }
+    { "type": "error",    "message": "ASR engine error: ..." }
+  ```
+- **Session management:**
+  - On WebSocket connect: create streaming ASR session (load model if not cached)
+  - On each audio chunk: forward to `engine.transcribe_stream()`, yield partial results back
+  - On WebSocket close: finalize session, flush remaining audio, return complete transcript
+  - Idle timeout: 5 minutes → auto-close session, free GPU memory
+- **Audio format conversion:** Client sends WebM/Opus from `MediaRecorder`; server converts to PCM 16kHz mono via FFmpeg pipe (streaming, no temp files)
+- **Rate control:** If client sends faster than real-time (burst), buffer up to 2 seconds then drop oldest chunks
+- **Accumulator:** Server accumulates all `is_final=True` segments into a running transcript. On session close, this becomes the `RawTranscript` that enters the post-processing pipeline.
+- **Runs on pipeline server only** — requires GPU. Provider-facing server proxies the WebSocket to the pipeline server.
+
+**d. WebSocket Proxy for Provider-Facing Server (`api/proxy.py`)**
+- Add `proxy_websocket_asr(encounter_id, client_ws)` — bidirectional WebSocket proxy
+- Provider-facing server accepts WS connection from client, opens WS to pipeline server's `/ws/asr/{encounter_id}`, and relays frames both directions
+- Audio chunks flow: Client → Provider WS → Pipeline WS → NeMo → Partial transcript → Pipeline WS → Provider WS → Client
+- PHI isolation maintained: only audio bytes cross the boundary (same as batch upload)
+
+**e. Capture Page — Three Audio Modes**
+Update the Capture page on both web (`client/web/app/capture/page.tsx`) and provider portal (`client/provider/app/capture/page.tsx`) with three audio input options:
+
+| Mode | Label | What Happens | ASR Engine | When Transcript Appears |
+|------|-------|-------------|------------|------------------------|
+| **Live** | "Record - Live Transcription" | Browser records + streams audio chunks via WebSocket; real-time transcript displayed | NeMo Streaming (dictation) or Multitalker (ambient) | During recording, updated every ~400ms |
+| **Offline** | "Record - Offline Transcription" | Browser records full audio, uploads after stop; pipeline runs batch ASR | WhisperX (batch) | After pipeline completes (~30-60s) |
+| **Upload** | "Upload Audio" | Drag-and-drop audio file; pipeline runs batch ASR | WhisperX (batch) | After pipeline completes |
+
+**Live Transcription UI:**
+- Audio mode selector: three large buttons/cards (Live / Offline / Upload) replacing the current two-option layout
+- When "Live" selected:
+  - Mic button starts recording + opens WebSocket to `/ws/asr/{encounter_id}`
+  - `MediaRecorder` with `timeslice: 160` ms → `ondataavailable` sends chunks via WS
+  - Real-time transcript panel below the recording controls:
+    - Scrolling text area showing accumulated transcript
+    - Current partial (non-final) text shown in gray italic
+    - Final segments in solid black with speaker labels (ambient mode: color-coded DOCTOR/PATIENT)
+    - Confidence indicator: green/yellow/red dot per segment
+  - Waveform visualization during recording (optional, use `AudioContext.analyser`)
+  - Stop button → closes WebSocket → server returns final accumulated transcript → pipeline continues with note generation
+- When "Offline" selected: current behavior (record, upload on stop)
+- When "Upload" selected: current drag-and-drop behavior
+
+**f. Mobile App — Live Transcription**
+Update `client/mobile/src/screens/RecordScreen.tsx`:
+- Add mode selector: "Live Transcription" / "Record & Upload" (upload-from-file not applicable on mobile)
+- Live mode: `expo-av` captures audio → sends PCM chunks via WebSocket → displays real-time transcript
+- WebSocket URL: `ws://{apiUrl}/ws/asr/{encounter_id}` (uses the same configurable API URL)
+- Transcript display: scrolling `ScrollView` below mic controls with speaker-labeled text
+
+**g. Transcribe Node — Streaming Integration**
+- `orchestrator/nodes/transcribe_node.py` updated with conditional path:
+  - If `state.streaming_transcript` is already populated (from live recording): **skip ASR**, go directly to post-processing
+  - If `state.audio_file_path` is set (offline/upload): run batch ASR via WhisperX (current behavior)
+- New state field: `EncounterState.streaming_transcript: Optional[RawTranscript] = None`
+  - Set by the audio streaming WebSocket handler when the live session completes
+  - Contains the accumulated `is_final` segments from the streaming session
+- Post-processing (12-stage rule pipeline) runs on the streaming transcript identically to batch
+- Quality gate and confidence scoring work the same way
+
+**h. ASR Router Updates (`orchestrator/edges/asr_router.py`)**
+- Add streaming engine selection logic:
+  - `mode=dictation` + `streaming=True` → NeMo Streaming Server
+  - `mode=ambient` + `streaming=True` → NeMo Multitalker Server
+  - `streaming=False` (offline/upload) → WhisperX (current default)
+- Provider profile `asr_overrides` can force streaming engine choice
+
+**i. Engine Registry Updates (`mcp_servers/registry.py`)**
+- Register NeMo streaming and multitalker engines
+- Health check: verify NeMo model loaded and GPU memory available
+- Lazy loading: NeMo models load on first streaming request, not at server startup
+- Memory management: unload NeMo when idle for >5 min (free GPU for WhisperX/Ollama)
+
+**j. Configuration (`config/engines.yaml`)**
+```yaml
+asr:
+  default_server: whisperx      # Batch default (unchanged)
+  streaming_server: nemo_streaming   # Default for live transcription
+  servers:
+    whisperx:
+      # ... existing config unchanged ...
+    nemo_streaming:
+      type: nemo_streaming
+      model: "nvidia/nemotron-speech-streaming-en-0.6b"
+      device: "cuda"
+      streaming: true
+      chunk_size_ms: 160        # 80ms lookahead
+      idle_unload_seconds: 300  # Unload after 5 min idle
+    nemo_multitalker:
+      type: nemo_multitalker
+      model: "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+      device: "cuda"
+      streaming: true
+      max_speakers: 4
+      chunk_size_ms: 160
+      idle_unload_seconds: 300
+```
+
+**k. VRAM Management**
+- NeMo Streaming: ~2-3 GB
+- NeMo Multitalker: ~4-5 GB
+- WhisperX: ~10-12 GB (peak)
+- Ollama qwen2.5:14b: ~8 GB
+- **Constraint (A10G 23 GB):** NeMo streaming + Ollama can coexist (~11 GB). WhisperX cannot run concurrently with NeMo.
+- **Strategy:** During live streaming, NeMo is loaded and WhisperX is not needed. After recording ends, if batch re-processing is needed (quality check), NeMo is unloaded first, then WhisperX loads.
+- Pipeline server manages this via `registry.unload_engine("asr_streaming")` before loading WhisperX.
+
+**l. Testing**
+- Unit tests: NeMo server mock with simulated streaming chunks
+- Integration tests: WebSocket audio streaming end-to-end with mock ASR engine
+- Data integrity tests: streaming transcript has same fields as batch transcript
+- UI tests: all three audio modes render, mode switching works, WebSocket connects
+- Latency test: measure end-to-end time from audio chunk send to partial transcript display
+
+**m. Implementation Order**
+1. `mcp_servers/asr/nemo_streaming_server.py` — core streaming engine
+2. `api/ws/audio_stream.py` — WebSocket endpoint
+3. `orchestrator/state.py` — add `streaming_transcript` field
+4. `orchestrator/nodes/transcribe_node.py` — conditional streaming path
+5. `client/web/app/capture/page.tsx` — three-mode UI with live transcript panel
+6. `client/provider/app/capture/page.tsx` — same UI for provider portal
+7. `client/mobile/src/screens/RecordScreen.tsx` — mobile live transcription
+8. `mcp_servers/asr/nemo_multitalker_server.py` — multi-speaker streaming
+9. `api/proxy.py` — WebSocket proxy for provider-facing server
+10. `config/engines.yaml` — streaming engine configuration
+11. Tests across all layers
+12. VRAM management integration with registry
+
+### Session 16: Learning Loop + Correction Capture
 - Capture provider corrections (diff: AI output vs provider-edited)
 - Classify corrections (ASR_ERROR, STYLE, CONTENT, CODING, TEMPLATE)
 - Generate training pairs for post-processor ML model
@@ -1172,7 +1343,8 @@ Components that run GPU-intensive AI workloads and admin operations:
 - Feed quality evaluator with real correction data
 - Trigger ASR re-fine-tuning when enough new corrected transcripts accumulate (see Session 10f)
 
-### Session 16: S3 Trigger Pipeline (Production Ingestion)
+### Session 17: S3 Trigger Pipeline (Production Ingestion)
+
 - Implement S3 upload watcher: audio files uploaded to designated S3 bucket trigger pipeline
 - EventBridge rule: S3 PutObject → invoke pipeline Lambda/container
 - Pipeline reads audio from S3, processes through full graph, writes output `.md` back to S3
@@ -1194,16 +1366,16 @@ Components that run GPU-intensive AI workloads and admin operations:
 - Implement `trigger/s3_handler.py` — the entry point invoked by EventBridge
 - All output files are Markdown, consistent with local pipeline output format
 
-### Session 17: Evidence-Linked Citations + Audio Recording UI
+### Session 18: Evidence-Linked Citations + Audio Recording UI
 - Audio indexer: word-level timestamp mapping for citation links
 - Citation metadata embedded in note Markdown (link note sentences → audio timestamps)
 - Offline audio buffering strategy for client-side capture (IndexedDB ring buffer)
 
-### Session 18: Browser Extension (Super Fill MVP)
+### Session 19: Browser Extension (Super Fill MVP)
 - Chrome MV3 extension scaffold
 - EHR detection, field mapping, note injection
 
-### Sessions 19+: Advanced features (coding suggestions, patient summaries, voice commands)
+### Sessions 20+: Advanced features (coding suggestions, patient summaries, voice commands)
 
 ## Coding Standards
 
