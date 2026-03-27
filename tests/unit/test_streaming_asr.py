@@ -73,13 +73,16 @@ class TestNemoStreamingServer:
         assert expired == 2
 
     def test_streaming_simulation_yields_partials(self):
-        """In simulation mode (no NeMo installed), server yields placeholder partials."""
+        """In simulation mode (no NeMo installed), server yields segments after enough audio accumulates."""
         server = self._make_server()
         server._loaded = True  # Skip model load attempt
         server._model = None   # Simulation mode
+        # Lower the window so we don't need 3 seconds of audio
+        server.STREAM_WINDOW_S = 0.5
 
         config = ASRConfig()
-        pcm = self._make_pcm_chunk(server, num_chunks=6)
+        # 0.5 seconds at 16kHz = 16000 samples = 32000 bytes. Need ~20 chunks of 160ms.
+        pcm = self._make_pcm_chunk(server, num_chunks=20)
 
         partials = []
         async def collect():
@@ -89,7 +92,7 @@ class TestNemoStreamingServer:
 
         assert len(partials) > 0
         assert all(isinstance(p, PartialTranscript) for p in partials)
-        # At least one should be final (every 5th chunk)
+        # All should be final (window-based transcription)
         finals = [p for p in partials if p.is_final]
         assert len(finals) >= 1
 
@@ -98,10 +101,11 @@ class TestNemoStreamingServer:
         server = self._make_server()
         server._loaded = True
         server._model = None
+        server.STREAM_WINDOW_S = 0.3  # Low threshold for test
 
         config = ASRConfig()
-        # Send enough chunks to get multiple finals (5 chunks each)
-        pcm = self._make_pcm_chunk(server, num_chunks=15)
+        # Send enough chunks to trigger multiple transcription windows
+        pcm = self._make_pcm_chunk(server, num_chunks=40)
 
         async def run():
             async for _ in server.transcribe_stream(pcm, "test-accum", config):
@@ -162,9 +166,11 @@ class TestNemoMultitalkerServer:
         server = NemoMultitalkerServer(device="cpu", chunk_size_ms=160)
         server._loaded = True
         server._model = None  # Simulation mode
+        server.STREAM_WINDOW_S = 0.3  # Low threshold for test
 
         config = ASRConfig()
-        pcm = b"\x00\x00" * server.chunk_samples * 10
+        # Need enough audio to trigger transcription window
+        pcm = b"\x00\x00" * server.chunk_samples * 40
 
         partials = []
         async def collect():
@@ -173,6 +179,7 @@ class TestNemoMultitalkerServer:
         asyncio.run(collect())
 
         finals = [p for p in partials if p.is_final]
+        assert len(finals) >= 1, "Should have at least one final segment"
         # Finals should have speaker labels
         for f in finals:
             assert f.speaker is not None

@@ -49,6 +49,12 @@ class StreamingSession:
     cache_state: Any = None
     # Audio buffer for incomplete frames
     audio_buffer: bytes = b""
+    # Full session PCM buffer (for NeMo chunked transcription)
+    full_pcm: bytes = b""
+    # Last transcription result (for diffing)
+    last_transcription: str = ""
+    # Bytes already transcribed (to know when new audio warrants re-transcription)
+    last_transcribed_bytes: int = 0
 
 
 class NemoStreamingServer(ASREngine):
@@ -199,6 +205,9 @@ class NemoStreamingServer(ASREngine):
 
     # ── Streaming transcription ──────────────────────────────────────────
 
+    # How many seconds of new audio before we re-transcribe
+    STREAM_WINDOW_S = 3.0  # Transcribe every 3 seconds of new audio
+
     async def transcribe_stream(
         self,
         audio_chunk: bytes,
@@ -208,8 +217,11 @@ class NemoStreamingServer(ASREngine):
         """
         Process a streaming audio chunk and yield partial transcripts.
 
-        If NeMo is not installed, uses a simulation mode that accumulates
-        audio and returns placeholder text (useful for UI development).
+        Strategy: accumulate PCM into a rolling buffer. Every STREAM_WINDOW_S
+        seconds of new audio, transcribe the latest window via model.transcribe()
+        and diff against the previous result to emit new text.
+
+        If NeMo is not installed, uses a simulation mode for UI development.
         """
         self._ensure_model()
         session = self._get_or_create_session(session_id)
@@ -217,108 +229,133 @@ class NemoStreamingServer(ASREngine):
         # Buffer the incoming audio
         session.audio_buffer += audio_chunk
 
-        # Process complete chunks
+        # Move complete frame-aligned data from audio_buffer to full_pcm
         while len(session.audio_buffer) >= self.chunk_bytes:
             chunk_data = session.audio_buffer[:self.chunk_bytes]
             session.audio_buffer = session.audio_buffer[self.chunk_bytes:]
+            session.full_pcm += chunk_data
             session.chunk_count += 1
+            session.elapsed_ms += self.chunk_size_ms
 
-            chunk_duration_ms = self.chunk_size_ms
-            start_ms = session.elapsed_ms
-            session.elapsed_ms += chunk_duration_ms
-            end_ms = session.elapsed_ms
+        # Check if we have enough new audio to warrant transcription
+        new_bytes = len(session.full_pcm) - session.last_transcribed_bytes
+        new_seconds = new_bytes / (self.sample_rate * 2)  # 2 bytes per sample
 
-            if self._model is not None:
-                # Real NeMo inference
-                result = await asyncio.to_thread(
-                    self._process_chunk_nemo, chunk_data, session
+        if new_seconds < self.STREAM_WINDOW_S:
+            return  # Not enough new audio yet
+
+        start_ms = session.last_transcribed_bytes * 1000 // (self.sample_rate * 2)
+        end_ms = session.elapsed_ms
+
+        if self._model is not None:
+            # Real NeMo inference on accumulated audio
+            result = await asyncio.to_thread(
+                self._transcribe_window_nemo, session
+            )
+        else:
+            # Simulation mode
+            result = self._transcribe_window_simulated(session, start_ms, end_ms)
+
+        if result:
+            text = result.get("text", "")
+            new_text = result.get("new_text", text)
+            is_final = result.get("is_final", True)
+            confidence = result.get("confidence", 0.9)
+
+            if new_text.strip():
+                partial = PartialTranscript(
+                    text=new_text,
+                    is_final=is_final,
+                    speaker=None,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    confidence=confidence,
                 )
-            else:
-                # Simulation mode (NeMo not installed)
-                result = self._process_chunk_simulated(chunk_data, session, start_ms, end_ms)
 
-            if result:
-                text = result.get("text", "")
-                is_final = result.get("is_final", False)
-                confidence = result.get("confidence", 0.9)
-
-                if text.strip():
-                    partial = PartialTranscript(
-                        text=text,
-                        is_final=is_final,
-                        speaker=None,
+                if is_final:
+                    session.accumulated_text += new_text + " "
+                    session.segments.append(RawSegment(
+                        text=new_text,
                         start_ms=start_ms,
                         end_ms=end_ms,
                         confidence=confidence,
-                    )
+                    ))
 
-                    if is_final:
-                        session.accumulated_text += text + " "
-                        session.segments.append(RawSegment(
-                            text=text,
-                            start_ms=start_ms,
-                            end_ms=end_ms,
-                            confidence=confidence,
-                        ))
+                yield partial
 
-                    yield partial
+        session.last_transcribed_bytes = len(session.full_pcm)
 
-    def _process_chunk_nemo(self, chunk_data: bytes, session: StreamingSession) -> dict:
-        """Process a single audio chunk through the NeMo model (runs in thread)."""
+    def _transcribe_window_nemo(self, session: StreamingSession) -> dict:
+        """Transcribe the accumulated audio via NeMo model.transcribe() (runs in thread).
+
+        Writes the latest audio window to a temp WAV, transcribes it, and
+        diffs against the previous transcription to find new text.
+        """
         try:
-            import torch
             import numpy as np
+            import soundfile as sf
+            import tempfile
 
-            # Convert PCM bytes to float tensor
-            audio_array = np.frombuffer(chunk_data, dtype=np.int16).astype(np.float32) / 32768.0
-            audio_tensor = torch.tensor(audio_array).unsqueeze(0)
+            # Convert full PCM buffer to float32 array
+            audio_array = np.frombuffer(session.full_pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
-            if self.device == "cuda":
-                audio_tensor = audio_tensor.cuda()
+            # Write to temp WAV file (NeMo transcribe expects file paths)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                sf.write(f.name, audio_array, self.sample_rate)
+                temp_path = f.name
 
-            with torch.no_grad():
-                # Use the model's streaming transcribe method
-                # The exact API depends on NeMo version
-                if hasattr(self._model, "transcribe_streaming"):
-                    result = self._model.transcribe_streaming(
-                        audio_tensor,
-                        cache_state=session.cache_state,
-                    )
-                    session.cache_state = result.get("cache_state")
-                    return {
-                        "text": result.get("text", ""),
-                        "is_final": result.get("is_final", False),
-                        "confidence": result.get("confidence", 0.9),
-                    }
-                else:
-                    # Fallback: use standard transcribe on accumulated audio
-                    paths = []  # NeMo transcribe expects file paths
-                    return {"text": "", "is_final": False, "confidence": 0.0}
+            # Transcribe the full accumulated audio
+            results = self._model.transcribe([temp_path])
+            text = results[0] if isinstance(results, list) else str(results)
+            if hasattr(text, 'text'):
+                text = text.text
+
+            # Clean up temp file
+            import os
+            os.unlink(temp_path)
+
+            # Diff: find the new text that wasn't in the last transcription
+            prev = session.last_transcription
+            new_text = text
+            if prev and text.startswith(prev[:20]):
+                # Simple prefix diff — find where new text starts
+                # Use word-level comparison for robustness
+                prev_words = prev.split()
+                new_words = text.split()
+                # Find longest common prefix
+                common = 0
+                for i, (a, b) in enumerate(zip(prev_words, new_words)):
+                    if a == b:
+                        common = i + 1
+                    else:
+                        break
+                new_text = " ".join(new_words[common:]) if common < len(new_words) else ""
+
+            session.last_transcription = text
+
+            return {
+                "text": text,
+                "new_text": new_text.strip(),
+                "is_final": True,
+                "confidence": 0.9,
+            }
 
         except Exception as exc:
-            logger.warning("nemo_streaming: chunk processing failed — %s", exc)
+            logger.warning("nemo_streaming: transcription failed — %s", exc)
             return {}
 
-    def _process_chunk_simulated(
-        self, chunk_data: bytes, session: StreamingSession,
+    def _transcribe_window_simulated(
+        self, session: StreamingSession,
         start_ms: int, end_ms: int,
     ) -> dict:
-        """Simulation mode: return placeholder partials for UI development."""
-        # Every 5th chunk, emit a "final" segment
-        is_final = (session.chunk_count % 5 == 0)
-        if is_final:
-            return {
-                "text": f"[streaming segment at {start_ms}ms]",
-                "is_final": True,
-                "confidence": 0.85,
-            }
-        elif session.chunk_count % 3 == 0:
-            return {
-                "text": f"[partial at {start_ms}ms...]",
-                "is_final": False,
-                "confidence": 0.7,
-            }
-        return {}
+        """Simulation mode: return placeholder text for UI development."""
+        segment_num = len(session.segments) + 1
+        return {
+            "text": f"[streaming segment {segment_num} at {start_ms}ms]",
+            "new_text": f"[streaming segment {segment_num} at {start_ms}ms]",
+            "is_final": True,
+            "confidence": 0.85,
+        }
 
     # ── Batch transcription (compatibility) ──────────────────────────────
 
