@@ -206,7 +206,8 @@ class NemoStreamingServer(ASREngine):
     # ── Streaming transcription ──────────────────────────────────────────
 
     # Transcribe only the latest N seconds (not the full buffer)
-    STREAM_WINDOW_S = 3.0
+    # Lower = more responsive but more GPU calls. 1s gives ~100ms inference per window.
+    STREAM_WINDOW_S = 1.0
 
     async def transcribe_stream(
         self,
