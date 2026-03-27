@@ -36,6 +36,55 @@ router = APIRouter(tags=["websocket"])
 # Active streaming ASR sessions
 _active_sessions: dict[str, dict] = {}
 
+# Preload state
+_preload_task: Optional[asyncio.Task] = None
+
+
+@router.post("/asr/preload", tags=["asr"])
+async def preload_streaming_model(mode: str = "dictation"):
+    """
+    Preload the streaming ASR model into GPU memory.
+
+    Call this when the user navigates to the Capture page so the model
+    is warm by the time they start recording (~8s load time avoided).
+
+    Returns immediately — loading happens in background.
+    """
+    global _preload_task
+
+    engine = _get_streaming_engine(mode)
+    if engine is None:
+        return {"status": "unavailable", "message": "No streaming ASR engine configured"}
+
+    if hasattr(engine, '_loaded') and engine._loaded:
+        return {"status": "ready", "message": "Model already loaded"}
+
+    # Start background load if not already running
+    if _preload_task and not _preload_task.done():
+        return {"status": "loading", "message": "Model load already in progress"}
+
+    async def _load():
+        logger.info("asr_preload: loading streaming model for mode=%s", mode)
+        await asyncio.to_thread(engine._ensure_model)
+        logger.info("asr_preload: model ready")
+
+    _preload_task = asyncio.create_task(_load())
+    return {"status": "loading", "message": "Model loading in background (~8s)"}
+
+
+@router.get("/asr/status", tags=["asr"])
+async def streaming_model_status():
+    """Check if the streaming ASR model is loaded and ready."""
+    for mode in ("dictation", "ambient"):
+        engine = _get_streaming_engine(mode)
+        if engine and hasattr(engine, '_loaded') and engine._loaded and engine._model is not None:
+            return {"status": "ready", "engine": engine.name, "model": engine.model_name}
+
+    if _preload_task and not _preload_task.done():
+        return {"status": "loading"}
+
+    return {"status": "not_loaded"}
+
 
 def _get_streaming_engine(mode: str = "dictation"):
     """Get the appropriate streaming ASR engine for the recording mode."""

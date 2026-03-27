@@ -93,12 +93,41 @@ export default function CapturePage() {
   const [sampleId, setSampleId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Load providers on mount
+  // ASR model preload status
+  const [asrReady, setAsrReady] = useState(false);
+
+  // Load providers on mount + preload streaming ASR model
   useEffect(() => {
     fetchProviders()
       .then((ps) => {
         setProviders(ps);
         if (ps.length > 0) setProviderId(ps[0].id);
+      })
+      .catch(() => {});
+
+    // Preload NeMo streaming model so it's warm when recording starts
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    fetch(`${apiBase}/asr/preload`, { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.status === "ready") {
+          setAsrReady(true);
+        } else {
+          // Poll until ready
+          const poll = setInterval(() => {
+            fetch(`${apiBase}/asr/status`)
+              .then((r) => r.json())
+              .then((s) => {
+                if (s.status === "ready") {
+                  setAsrReady(true);
+                  clearInterval(poll);
+                }
+              })
+              .catch(() => {});
+          }, 2000);
+          // Stop polling after 30s
+          setTimeout(() => clearInterval(poll), 30000);
+        }
       })
       .catch(() => {});
   }, []);
@@ -553,7 +582,10 @@ export default function CapturePage() {
           {/* Three-mode selector */}
           <div className="grid grid-cols-3 gap-2">
             {([
-              { key: "live" as const, icon: <Mic size={14} />, label: "Record", sub: "Live Transcription" },
+              {
+                key: "live" as const, icon: <Mic size={14} />, label: "Record",
+                sub: asrReady ? "Live Transcription" : "Loading ASR...",
+              },
               { key: "offline" as const, icon: <MicOff size={14} />, label: "Record", sub: "Offline Transcription" },
               { key: "upload" as const, icon: <Upload size={14} />, label: "Upload", sub: "Audio File" },
             ]).map((opt) => (
@@ -587,7 +619,7 @@ export default function CapturePage() {
                   <button
                     type="button"
                     onClick={isRecording ? stopRecording : startRecording}
-                    disabled={audioMode === "live" && (!providerId || !selectedPatient)}
+                    disabled={(audioMode === "live" && (!providerId || !selectedPatient || !asrReady))}
                     className="w-16 h-16 rounded-full flex items-center justify-center text-white transition-all disabled:opacity-50"
                     style={{
                       background: isRecording ? "#EF4444" : "var(--brand-green)",
@@ -609,7 +641,12 @@ export default function CapturePage() {
                         {audioMode === "live"
                           ? "Click to start live transcription"
                           : "Click to start recording"}
-                        {audioMode === "live" && (!providerId || !selectedPatient) && (
+                        {audioMode === "live" && !asrReady && (
+                          <div className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                            <Loader2 size={10} className="animate-spin" /> Loading ASR model...
+                          </div>
+                        )}
+                        {audioMode === "live" && asrReady && (!providerId || !selectedPatient) && (
                           <div className="text-xs text-amber-600 mt-1">Select provider and patient first</div>
                         )}
                       </div>
