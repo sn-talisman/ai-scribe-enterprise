@@ -67,7 +67,8 @@ export default function CapturePage() {
   const [visitType, setVisitType] = useState("follow_up");
   const [mode, setMode] = useState<"dictation" | "ambient">("dictation");
 
-  // Audio
+  // Audio mode: "live" | "offline" | "upload"
+  const [audioMode, setAudioMode] = useState<"live" | "offline" | "upload">("offline");
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -76,6 +77,13 @@ export default function CapturePage() {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Live transcription state
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [livePartial, setLivePartial] = useState<string>("");
+  const [liveSegments, setLiveSegments] = useState<Array<{text: string; speaker?: string; is_final: boolean}>>([]);
+  const asrWsRef = useRef<WebSocket | null>(null);
+  const liveTranscriptRef = useRef<HTMLDivElement>(null);
 
   // Pipeline status
   const [status, setStatus] = useState<PipelineStage>("idle");
@@ -155,8 +163,8 @@ export default function CapturePage() {
     setPatientResults([]);
   };
 
-  // Recording
-  const startRecording = async () => {
+  // Recording (offline mode — record full audio, then upload)
+  const startRecordingOffline = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -170,11 +178,11 @@ export default function CapturePage() {
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setRecordedBlob(blob);
-        setAudioFile(null); // Clear file upload if recording
+        setAudioFile(null);
         stream.getTracks().forEach((t) => t.stop());
       };
 
-      mediaRecorder.start(1000); // Collect data every second
+      mediaRecorder.start(1000);
       setIsRecording(true);
       setRecordingTime(0);
       setRecordedBlob(null);
@@ -185,6 +193,109 @@ export default function CapturePage() {
     } catch {
       setStatusMessage("Microphone access denied");
       setStatus("error");
+    }
+  };
+
+  // Recording (live mode — stream audio chunks via WebSocket for real-time transcription)
+  const startRecordingLive = async () => {
+    try {
+      // Create encounter first (needed for WebSocket session ID)
+      if (!providerId || !selectedPatient) return;
+
+      setStatus("creating");
+      setStatusMessage("Creating encounter...");
+      const enc = await createEncounter({
+        provider_id: providerId,
+        patient_id: selectedPatient.id,
+        visit_type: visitType,
+        mode,
+      });
+      setEncounterId(enc.encounter_id);
+
+      // Connect ASR streaming WebSocket
+      const wsUrl = `${WS_BASE}/ws/asr/${enc.encounter_id}?mode=${mode}&format=webm`;
+      const asrWs = new WebSocket(wsUrl);
+      asrWsRef.current = asrWs;
+
+      asrWs.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "partial") {
+          setLivePartial(data.text);
+        } else if (data.type === "final") {
+          setLiveSegments((prev) => [...prev, {
+            text: data.text,
+            speaker: data.speaker,
+            is_final: true,
+          }]);
+          setLiveTranscript((prev) => prev + data.text + " ");
+          setLivePartial("");
+          // Auto-scroll
+          if (liveTranscriptRef.current) {
+            liveTranscriptRef.current.scrollTop = liveTranscriptRef.current.scrollHeight;
+          }
+        } else if (data.type === "complete") {
+          setLivePartial("");
+        }
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        asrWs.onopen = () => resolve();
+        asrWs.onerror = () => reject(new Error("ASR WebSocket connection failed"));
+        setTimeout(() => reject(new Error("ASR WebSocket timeout")), 5000);
+      });
+
+      // Start recording and stream chunks
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
+          // Send chunk to ASR WebSocket
+          if (asrWsRef.current?.readyState === WebSocket.OPEN) {
+            e.data.arrayBuffer().then((buf) => {
+              asrWsRef.current?.send(buf);
+            });
+          }
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setRecordedBlob(blob);
+        stream.getTracks().forEach((t) => t.stop());
+        // Close ASR WebSocket — triggers final transcript
+        if (asrWsRef.current?.readyState === WebSocket.OPEN) {
+          asrWsRef.current.close();
+        }
+      };
+
+      mediaRecorder.start(160); // 160ms chunks for streaming
+      setIsRecording(true);
+      setRecordingTime(0);
+      setRecordedBlob(null);
+      setLiveTranscript("");
+      setLivePartial("");
+      setLiveSegments([]);
+      setStatus("processing");
+      setStatusMessage("Live transcription active...");
+
+      timerRef.current = setInterval(() => {
+        setRecordingTime((t) => t + 1);
+      }, 1000);
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "Failed to start live recording");
+      setStatus("error");
+    }
+  };
+
+  const startRecording = () => {
+    if (audioMode === "live") {
+      startRecordingLive();
+    } else {
+      startRecordingOffline();
     }
   };
 
@@ -235,40 +346,60 @@ export default function CapturePage() {
 
   // Submit
   const hasAudio = audioFile !== null || recordedBlob !== null;
-  const canSubmit = providerId && selectedPatient && hasAudio && status === "idle";
+  const canSubmitOffline = providerId && selectedPatient && hasAudio && status === "idle";
+  // Live mode: encounter already created during recording, just need to upload audio for pipeline
+  const canSubmitLive = audioMode === "live" && recordedBlob && encounterId && !isRecording;
+  const canSubmit = canSubmitOffline || canSubmitLive;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
 
     try {
-      setStatus("creating");
-      setStatusMessage("Creating encounter...");
-      setProgress(0);
+      if (audioMode === "live" && encounterId) {
+        // Live mode: encounter already exists, upload audio for pipeline processing
+        setStatus("uploading");
+        setStatusMessage("Uploading audio for note generation...");
+        setProgress(5);
 
-      const enc = await createEncounter({
-        provider_id: providerId,
-        patient_id: selectedPatient!.id,
-        visit_type: visitType,
-        mode,
-      });
-      setEncounterId(enc.encounter_id);
+        connectWs(encounterId);
 
-      // Connect WebSocket before uploading
-      connectWs(enc.encounter_id);
+        const audioBlob = recordedBlob!;
+        const result = await uploadEncounterAudio(encounterId, audioBlob, "recording.webm");
 
-      setStatus("uploading");
-      setStatusMessage("Uploading audio...");
-      setProgress(5);
+        setStatus("processing");
+        setStatusMessage(result.message ?? "Generating clinical note...");
+        setSampleId(result.sample_id);
+        setProgress(10);
+      } else {
+        // Offline / Upload mode: create encounter + upload + trigger pipeline
+        setStatus("creating");
+        setStatusMessage("Creating encounter...");
+        setProgress(0);
 
-      const audioBlob = audioFile ?? recordedBlob!;
-      const filename = audioFile?.name ?? "recording.webm";
-      const result = await uploadEncounterAudio(enc.encounter_id, audioBlob, filename);
+        const enc = await createEncounter({
+          provider_id: providerId,
+          patient_id: selectedPatient!.id,
+          visit_type: visitType,
+          mode,
+        });
+        setEncounterId(enc.encounter_id);
 
-      setStatus("processing");
-      setStatusMessage(result.message ?? "Pipeline running...");
-      setSampleId(result.sample_id);
-      setProgress(10);
+        connectWs(enc.encounter_id);
+
+        setStatus("uploading");
+        setStatusMessage("Uploading audio...");
+        setProgress(5);
+
+        const audioBlob = audioFile ?? recordedBlob!;
+        const filename = audioFile?.name ?? "recording.webm";
+        const result = await uploadEncounterAudio(enc.encounter_id, audioBlob, filename);
+
+        setStatus("processing");
+        setStatusMessage(result.message ?? "Pipeline running...");
+        setSampleId(result.sample_id);
+        setProgress(10);
+      }
     } catch (err) {
       setStatus("error");
       setStatusMessage(err instanceof Error ? err.message : "Unknown error");
@@ -284,7 +415,11 @@ export default function CapturePage() {
     setAudioFile(null);
     setRecordedBlob(null);
     setRecordingTime(0);
+    setLiveTranscript("");
+    setLivePartial("");
+    setLiveSegments([]);
     wsRef.current?.close();
+    asrWsRef.current?.close();
   };
 
   return (
@@ -415,43 +550,45 @@ export default function CapturePage() {
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 space-y-4">
           <h2 className="text-sm font-semibold text-gray-800">4. Audio</h2>
 
-          {/* Tab: Record vs Upload */}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => { setAudioFile(null); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors"
-              style={{
-                background: !audioFile && !recordedBlob ? "var(--brand-green)" : "white",
-                color: !audioFile && !recordedBlob ? "white" : "#6B7280",
-                borderColor: !audioFile && !recordedBlob ? "var(--brand-green)" : "#E5E7EB",
-              }}
-            >
-              <Mic size={12} /> Record
-            </button>
-            <button
-              type="button"
-              onClick={() => { setRecordedBlob(null); setRecordingTime(0); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors"
-              style={{
-                background: audioFile ? "var(--brand-green)" : "white",
-                color: audioFile ? "white" : "#6B7280",
-                borderColor: audioFile ? "var(--brand-green)" : "#E5E7EB",
-              }}
-            >
-              <Upload size={12} /> Upload File
-            </button>
+          {/* Three-mode selector */}
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "live" as const, icon: <Mic size={14} />, label: "Record", sub: "Live Transcription" },
+              { key: "offline" as const, icon: <MicOff size={14} />, label: "Record", sub: "Offline Transcription" },
+              { key: "upload" as const, icon: <Upload size={14} />, label: "Upload", sub: "Audio File" },
+            ]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => {
+                  setAudioMode(opt.key);
+                  if (opt.key === "upload") { setRecordedBlob(null); setRecordingTime(0); }
+                  if (opt.key !== "upload") { setAudioFile(null); }
+                }}
+                className="flex flex-col items-center gap-1 px-3 py-3 rounded-xl text-xs font-medium border-2 transition-all"
+                style={{
+                  background: audioMode === opt.key ? "var(--brand-green)" : "white",
+                  color: audioMode === opt.key ? "white" : "#6B7280",
+                  borderColor: audioMode === opt.key ? "var(--brand-green)" : "#E5E7EB",
+                }}
+              >
+                {opt.icon}
+                <span className="font-semibold">{opt.label}</span>
+                <span className="text-[10px] opacity-80">{opt.sub}</span>
+              </button>
+            ))}
           </div>
 
-          {/* Record UI */}
-          {!audioFile && (
+          {/* Live / Offline record UI */}
+          {audioMode !== "upload" && (
             <div className="space-y-3">
               {!recordedBlob ? (
                 <div className="flex items-center gap-4">
                   <button
                     type="button"
                     onClick={isRecording ? stopRecording : startRecording}
-                    className="w-16 h-16 rounded-full flex items-center justify-center text-white transition-all"
+                    disabled={audioMode === "live" && (!providerId || !selectedPatient)}
+                    className="w-16 h-16 rounded-full flex items-center justify-center text-white transition-all disabled:opacity-50"
                     style={{
                       background: isRecording ? "#EF4444" : "var(--brand-green)",
                     }}
@@ -463,13 +600,18 @@ export default function CapturePage() {
                       <>
                         <div className="text-sm font-medium text-red-600 flex items-center gap-2">
                           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                          Recording...
+                          {audioMode === "live" ? "Live Transcription..." : "Recording..."}
                         </div>
                         <div className="text-2xl font-mono text-gray-800">{formatTime(recordingTime)}</div>
                       </>
                     ) : (
                       <div className="text-sm text-gray-500">
-                        Click to start recording
+                        {audioMode === "live"
+                          ? "Click to start live transcription"
+                          : "Click to start recording"}
+                        {audioMode === "live" && (!providerId || !selectedPatient) && (
+                          <div className="text-xs text-amber-600 mt-1">Select provider and patient first</div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -487,18 +629,56 @@ export default function CapturePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setRecordedBlob(null); setRecordingTime(0); }}
+                    onClick={() => { setRecordedBlob(null); setRecordingTime(0); setLiveTranscript(""); setLiveSegments([]); }}
                     className="text-gray-400 hover:text-gray-600"
                   >
                     <X size={16} />
                   </button>
                 </div>
               )}
+
+              {/* Live transcript panel */}
+              {audioMode === "live" && isRecording && (
+                <div
+                  ref={liveTranscriptRef}
+                  className="bg-gray-50 rounded-lg p-4 max-h-48 overflow-y-auto border border-gray-200"
+                >
+                  <div className="text-xs font-semibold text-gray-400 mb-2">Live Transcript</div>
+                  {liveSegments.map((seg, i) => (
+                    <span key={i} className="text-sm text-gray-800">
+                      {seg.speaker && (
+                        <span className="text-xs font-bold mr-1" style={{
+                          color: seg.speaker === "SPEAKER_00" ? "var(--brand-green)" : "var(--brand-indigo)",
+                        }}>
+                          {seg.speaker === "SPEAKER_00" ? "DR" : "PT"}:
+                        </span>
+                      )}
+                      {seg.text}{" "}
+                    </span>
+                  ))}
+                  {livePartial && (
+                    <span className="text-sm text-gray-400 italic">{livePartial}</span>
+                  )}
+                  {liveSegments.length === 0 && !livePartial && (
+                    <span className="text-sm text-gray-400 italic">Waiting for speech...</span>
+                  )}
+                </div>
+              )}
+
+              {/* Show final transcript after live recording stops */}
+              {audioMode === "live" && !isRecording && liveTranscript && (
+                <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                  <div className="text-xs font-semibold text-green-700 mb-2">
+                    Live Transcript ({liveSegments.length} segments)
+                  </div>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{liveTranscript.trim()}</p>
+                </div>
+              )}
             </div>
           )}
 
           {/* File upload UI */}
-          {!recordedBlob && !isRecording && (
+          {audioMode === "upload" && (
             <div>
               <input
                 ref={fileInputRef}

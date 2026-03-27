@@ -115,6 +115,11 @@ app.include_router(encounters.router)
 app.include_router(quality.router)
 app.include_router(session_events.router)
 
+# Audio streaming WebSocket (pipeline server: direct, provider-facing: proxy)
+if cfg.is_processing_pipeline:
+    from api.ws import audio_stream
+    app.include_router(audio_stream.router)
+
 # Provider-facing routes: patients (EHR), providers (read)
 if cfg.is_provider_facing:
     from api.routes import patients, providers, specialties, templates

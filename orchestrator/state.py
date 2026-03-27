@@ -369,6 +369,9 @@ class EncounterState(BaseModel):
     typed_addendums: list[Addendum] = Field(default_factory=list)
     recording_mode: RecordingMode = RecordingMode.DICTATION
 
+    # ── STREAMING ASR output (set by WebSocket handler, skip batch ASR) ──
+    streaming_transcript: Optional[UnifiedTranscript] = None
+
     # ── TRANSCRIBE NODE output ────────────────────────────────────────────
     transcript: Optional[UnifiedTranscript] = None
     asr_engine_used: str = ""

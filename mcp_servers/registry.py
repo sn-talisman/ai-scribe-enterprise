@@ -45,7 +45,8 @@ _SERVER_MAP: dict[tuple[str, str], tuple[str, str]] = {
     # ASR engines
     ("asr", "whisperx"):        ("mcp_servers.asr.whisperx_server",      "WhisperXServer"),
     ("asr", "whisperx_lora"):   ("mcp_servers.asr.whisperx_lora_server", "WhisperXLoRAServer"),
-    # ("asr", "nemo"):          ("mcp_servers.asr.nemo_streaming_server", "NemoStreamingServer"),
+    ("asr", "nemo_streaming"):  ("mcp_servers.asr.nemo_streaming_server", "NemoStreamingServer"),
+    ("asr", "nemo_multitalker"):("mcp_servers.asr.nemo_multitalker_server", "NemoMultitalkerServer"),
     # ("asr", "deepgram"):      ("mcp_servers.asr.deepgram_server",      "DeepgramServer"),
 
     # LLM engines

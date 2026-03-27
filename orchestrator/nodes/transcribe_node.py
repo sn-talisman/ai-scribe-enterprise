@@ -250,6 +250,48 @@ def transcribe_node(state: EncounterState) -> dict:
     errors = list(state.errors)
 
     # ── Pass-through guard ────────────────────────────────────────────────
+    # If streaming_transcript is set (from live recording WebSocket), use it
+    # instead of running batch ASR. Post-processing still runs below.
+    if state.streaming_transcript and state.streaming_transcript.full_text:
+        logger.info(
+            "transcribe_node: using streaming transcript (live recording), skipping batch ASR",
+            extra={"encounter_id": state.encounter_id},
+        )
+        transcript = state.streaming_transcript
+        asr_engine_used = transcript.engine_used or "nemo_streaming"
+        diarization_used = transcript.diarization_engine or ""
+        # Jump to post-processing (below the batch ASR block)
+        pp_mode = state.provider_profile.postprocessor_mode
+        transcript, pp_metrics, pp_version = _apply_postprocessor(transcript, mode=pp_mode)
+        asr_confidence = _score_asr_confidence(transcript)
+        elapsed_ms = (time.monotonic_ns() - t0) // 1_000_000
+        logger.info(
+            "transcribe_node: streaming transcript post-processed — %d segs, conf=%.2f",
+            len(transcript.segments), asr_confidence,
+            extra={"encounter_id": state.encounter_id},
+        )
+        return {
+            "status": EncounterStatus.PROCESSING,
+            "transcript": transcript,
+            "asr_engine_used": asr_engine_used,
+            "diarization_engine_used": diarization_used,
+            "postprocessor_version": pp_version,
+            "postprocessor_metrics": pp_metrics,
+            "errors": list(state.errors),
+            "metrics": state.metrics.model_copy(
+                update={
+                    "asr_duration_ms": elapsed_ms,
+                    "asr_confidence": asr_confidence,
+                    "postprocessor_corrections": (
+                        pp_metrics.get("stutter_pairs_merged", 0)
+                        + pp_metrics.get("char_stutters_fixed", 0)
+                        + pp_metrics.get("medical_corrections", 0)
+                    ),
+                    "nodes_completed": state.metrics.nodes_completed + ["transcribe"],
+                }
+            ),
+        }
+
     if state.transcript and state.transcript.full_text:
         logger.info(
             "transcribe_node: transcript already present, pass-through",

@@ -54,6 +54,8 @@ llm:
 # ─────────────────────────────────────────────────────────────────────────────
 asr:
   default_server: whisperx
+  streaming_server: nemo_streaming          # Default for live transcription
+  streaming_multitalker_server: nemo_multitalker  # Default for ambient live transcription
 
   servers:
     whisperx:                           # DEFAULT — batch, with diarization
@@ -89,20 +91,22 @@ asr:
       # hotwords: []                       # per-provider token-level boost (specialty terms)
       #                                    # more targeted than initial_prompt prefix
 
-    nemo_streaming:                     # Real-time streaming ASR
-      type: nemo
+    nemo_streaming:                     # Real-time streaming ASR (single speaker)
+      type: nemo_streaming
       model: "nvidia/nemotron-speech-streaming-en-0.6b"
       device: "cuda"
       streaming: true
-      chunk_size_ms: 160
+      chunk_size_ms: 160               # 80ms lookahead (good latency/accuracy balance)
+      idle_unload_seconds: 300         # Unload model after 5 min idle
 
     nemo_multitalker:                   # Real-time multi-speaker streaming
       type: nemo_multitalker
       model: "nvidia/multitalker-parakeet-streaming-0.6b-v1"
       device: "cuda"
       streaming: true
-      max_speakers: 5
+      max_speakers: 4
       chunk_size_ms: 160
+      idle_unload_seconds: 300
 
     deepgram:                           # Cloud option (future)
       type: deepgram
