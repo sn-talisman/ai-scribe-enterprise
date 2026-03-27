@@ -236,14 +236,31 @@ export default function CapturePage() {
       });
       setEncounterId(enc.encounter_id);
 
-      // Start recording first (get mic permission before WebSocket)
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Get mic stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true },
+      });
+
+      // Also record WebM for offline pipeline (runs after recording stops)
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setRecordedBlob(blob);
+        stream.getTracks().forEach((t) => t.stop());
+        try {
+          if (asrWsRef.current && asrWsRef.current.readyState === WebSocket.OPEN) {
+            asrWsRef.current.close();
+          }
+        } catch { /* ignore */ }
+      };
 
-      // Connect ASR streaming WebSocket (non-blocking — don't fail if it takes time)
-      const wsUrl = `${WS_BASE}/ws/asr/${enc.encounter_id}?mode=${mode}&format=webm`;
+      // Connect ASR WebSocket with format=pcm (browser sends raw PCM, no FFmpeg needed)
+      const wsUrl = `${WS_BASE}/ws/asr/${enc.encounter_id}?mode=${mode}&format=pcm`;
       const asrWs = new WebSocket(wsUrl);
       asrWsRef.current = asrWs;
 
@@ -275,29 +292,34 @@ export default function CapturePage() {
         setLiveError("ASR connection failed — transcript will be generated after recording");
       };
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-          // Send chunk to ASR WebSocket if connected
-          if (asrWsRef.current?.readyState === WebSocket.OPEN) {
-            e.data.arrayBuffer().then((buf) => {
-              asrWsRef.current?.send(buf);
-            });
-          }
+      // Use AudioContext to capture raw PCM at 16kHz and send via WebSocket
+      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      const source = audioCtx.createMediaStreamSource(stream);
+
+      // ScriptProcessor sends PCM chunks (4096 samples = 256ms at 16kHz)
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (e) => {
+        const float32 = e.inputBuffer.getChannelData(0);
+        // Convert float32 [-1,1] to int16 PCM
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+          const s = Math.max(-1, Math.min(1, float32[i]));
+          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        // Send raw PCM bytes if WebSocket is open
+        if (asrWsRef.current && asrWsRef.current.readyState === WebSocket.OPEN) {
+          asrWsRef.current.send(int16.buffer);
         }
       };
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        setRecordedBlob(blob);
-        stream.getTracks().forEach((t) => t.stop());
-        // Close ASR WebSocket
-        if (asrWsRef.current?.readyState === WebSocket.OPEN) {
-          asrWsRef.current.close();
-        }
-      };
+      // Store refs for cleanup
+      (mediaRecorderRef.current as any)._audioCtx = audioCtx;
+      (mediaRecorderRef.current as any)._processor = processor;
+      (mediaRecorderRef.current as any)._source = source;
 
-      mediaRecorder.start(160); // 160ms chunks for streaming
+      mediaRecorder.start(1000); // WebM recording for offline pipeline
       setIsRecording(true);
       setRecordingTime(0);
       setRecordedBlob(null);
@@ -322,6 +344,13 @@ export default function CapturePage() {
   };
 
   const stopRecording = () => {
+    // Clean up AudioContext (live mode PCM streaming)
+    if (mediaRecorderRef.current) {
+      const mr = mediaRecorderRef.current as any;
+      if (mr._processor) { mr._processor.disconnect(); mr._processor = null; }
+      if (mr._source) { mr._source.disconnect(); mr._source = null; }
+      if (mr._audioCtx) { mr._audioCtx.close().catch(() => {}); mr._audioCtx = null; }
+    }
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
     }
