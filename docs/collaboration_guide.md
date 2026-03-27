@@ -166,9 +166,40 @@ bash scripts/test_web_pages.sh
 - **Pipeline team:** Add tests to `tests/unit/test_pipeline_api.py` for pipeline routes, `tests/integration/test_dual_server.py` for cross-server behavior
 - **Shared changes:** Add tests to `tests/unit/test_deployment_config.py` for config changes, `tests/unit/test_paths.py` for path resolution
 
+### Excluded Tests
+
+`tests/unit/test_data_sync.py` (7 tests) — references `scripts/sync_to_pipeline.py` and `scripts/sync_from_pipeline.py` which are planned but not yet implemented. Exclude with `--ignore=tests/unit/test_data_sync.py` until those scripts are built.
+
 ---
 
 ## 4. Commit Standards
+
+### MANDATORY: Test Results in Every Commit
+
+**Every commit to main MUST include test results in the commit message.** This is non-negotiable. Run the test suite, paste the summary line, and include it in the commit footer.
+
+```bash
+# Run before EVERY commit:
+source .venv/bin/activate
+python -m pytest tests/unit/ tests/integration/ --ignore=tests/unit/test_data_sync.py --tb=short -q
+
+# Expected output (example):
+# 270 passed in 54.23s
+```
+
+**Commit message format with test results:**
+
+```
+Fix streaming ASR window size for lower latency
+
+Reduced STREAM_WINDOW_S from 3.0 to 1.0 for ~1.1s end-to-end latency.
+
+Test results: 270 passed, 0 failed (unit + integration, 54s)
+
+Co-Authored-By: ...
+```
+
+**If any test fails, do NOT commit.** Fix the failure first. If a test is legitimately broken by your change, update the test in the same commit.
 
 ### Commit Message Format
 
