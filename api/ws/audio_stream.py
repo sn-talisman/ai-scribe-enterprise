@@ -190,64 +190,107 @@ async def asr_stream(
     logger.info("asr_stream: session started — encounter=%s mode=%s engine=%s",
                 encounter_id, mode, engine.name)
 
+    # Producer/consumer pattern: decouple audio receiving from ASR processing
+    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=100)
     accumulated_transcript = ""
+    client_done = asyncio.Event()
 
-    try:
+    async def receive_audio():
+        """Producer: receive audio chunks from WebSocket, put into queue.
+
+        Keeps receiving until the client sends a close frame or disconnects.
+        Uses a long timeout so slow clients don't get dropped.
+        """
+        try:
+            while True:
+                # Use websocket.receive() to handle both bytes and close frames
+                message = await asyncio.wait_for(websocket.receive(), timeout=120.0)
+
+                if message.get("type") == "websocket.disconnect":
+                    break
+                if "bytes" in message and message["bytes"]:
+                    data = message["bytes"]
+                    if needs_conversion and converter:
+                        await converter.write(data)
+                        pcm_data = await converter.read(engine.chunk_bytes * 2)
+                        if pcm_data:
+                            await audio_queue.put(pcm_data)
+                    else:
+                        await audio_queue.put(data)
+                # Ignore text messages (pings from client)
+
+        except WebSocketDisconnect:
+            pass
+        except asyncio.TimeoutError:
+            logger.info("asr_stream: receive timeout (120s idle) — closing")
+        except Exception as exc:
+            logger.warning("asr_stream: receive error — %s", exc)
+        finally:
+            await audio_queue.put(None)  # Sentinel: no more audio
+            client_done.set()
+
+    async def process_audio():
+        """Consumer: pull audio from queue, run ASR, send results back.
+
+        Processes ALL queued audio even after the client stops sending.
+        This ensures the model has time to transcribe buffered chunks.
+        """
+        nonlocal accumulated_transcript
         while True:
-            # Receive audio chunk from client
             try:
-                data = await asyncio.wait_for(
-                    websocket.receive_bytes(),
-                    timeout=30.0,
-                )
+                pcm_data = await asyncio.wait_for(audio_queue.get(), timeout=5.0)
             except asyncio.TimeoutError:
-                # Send keepalive
-                await websocket.send_text(json.dumps({"type": "ping"}))
+                # No new audio for 5s — if client is done, stop processing
+                if client_done.is_set() and audio_queue.empty():
+                    break
                 continue
 
-            _active_sessions[session_id]["chunks_received"] = (
-                _active_sessions[session_id].get("chunks_received", 0) + 1
-            )
+            if pcm_data is None:
+                # Client done — but process any remaining buffered audio in the engine
+                # Feed a dummy empty chunk to flush the engine's internal buffer
+                try:
+                    async for partial in engine.transcribe_stream(b"", session_id, asr_config):
+                        if partial.text.strip():
+                            accumulated_transcript += partial.text + " "
+                            try:
+                                await websocket.send_text(json.dumps({
+                                    "type": "final", "text": partial.text,
+                                    "is_final": True, "speaker": partial.speaker,
+                                    "start_ms": partial.start_ms, "end_ms": partial.end_ms,
+                                    "confidence": partial.confidence,
+                                }))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                break
 
-            # Convert audio format if needed
-            if needs_conversion and converter:
-                await converter.write(data)
-                # Read available PCM data (non-blocking, read what's available)
-                pcm_data = await converter.read(
-                    engine.chunk_bytes * 2  # Read up to 2 chunks worth
-                )
-                if not pcm_data:
-                    continue
-            else:
-                pcm_data = data
+            try:
+                async for partial in engine.transcribe_stream(pcm_data, session_id, asr_config):
+                    event = {
+                        "type": "final" if partial.is_final else "partial",
+                        "text": partial.text,
+                        "is_final": partial.is_final,
+                        "speaker": partial.speaker,
+                        "start_ms": partial.start_ms,
+                        "end_ms": partial.end_ms,
+                        "confidence": partial.confidence,
+                    }
+                    try:
+                        await websocket.send_text(json.dumps(event))
+                    except Exception:
+                        return  # WebSocket closed
 
-            # Feed to streaming ASR engine
-            async for partial in engine.transcribe_stream(pcm_data, session_id, asr_config):
-                event = {
-                    "type": "final" if partial.is_final else "partial",
-                    "text": partial.text,
-                    "is_final": partial.is_final,
-                    "speaker": partial.speaker,
-                    "start_ms": partial.start_ms,
-                    "end_ms": partial.end_ms,
-                    "confidence": partial.confidence,
-                }
-                await websocket.send_text(json.dumps(event))
+                    if partial.is_final:
+                        accumulated_transcript += partial.text + " "
+            except Exception as exc:
+                logger.warning("asr_stream: ASR error — %s", exc)
 
-                if partial.is_final:
-                    accumulated_transcript += partial.text + " "
-
-    except WebSocketDisconnect:
-        logger.info("asr_stream: client disconnected — encounter=%s", encounter_id)
+    try:
+        # Run producer and consumer concurrently
+        await asyncio.gather(receive_audio(), process_audio())
     except Exception as exc:
         logger.error("asr_stream: error — %s", exc)
-        try:
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": str(exc),
-            }))
-        except Exception:
-            pass
     finally:
         # Finalize session
         raw_transcript = engine.finalize_session(session_id)
@@ -280,7 +323,5 @@ async def asr_stream(
             await converter.close()
         _active_sessions.pop(session_id, None)
 
-        logger.info("asr_stream: session ended — encounter=%s chunks=%d transcript_len=%d",
-                     encounter_id,
-                     _active_sessions.get(session_id, {}).get("chunks_received", 0),
-                     len(accumulated_transcript))
+        logger.info("asr_stream: session ended — encounter=%s transcript_len=%d",
+                     encounter_id, len(accumulated_transcript))
