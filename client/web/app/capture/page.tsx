@@ -218,13 +218,16 @@ export default function CapturePage() {
   };
 
   // Recording (live mode — stream audio chunks via WebSocket for real-time transcription)
-  const startRecordingLive = async () => {
-    try {
-      // Create encounter first (needed for WebSocket session ID)
-      if (!providerId || !selectedPatient) return;
+  // Status stays "idle" during live recording so the form + mic + transcript panel stay visible.
+  // The encounter is created on record start; the offline pipeline runs after recording stops.
+  const [liveError, setLiveError] = useState<string>("");
 
-      setStatus("creating");
-      setStatusMessage("Creating encounter...");
+  const startRecordingLive = async () => {
+    if (!providerId || !selectedPatient) return;
+    setLiveError("");
+
+    try {
+      // Create encounter (needed for WebSocket session ID)
       const enc = await createEncounter({
         provider_id: providerId,
         patient_id: selectedPatient.id,
@@ -233,48 +236,49 @@ export default function CapturePage() {
       });
       setEncounterId(enc.encounter_id);
 
-      // Connect ASR streaming WebSocket
-      const wsUrl = `${WS_BASE}/ws/asr/${enc.encounter_id}?mode=${mode}&format=webm`;
-      const asrWs = new WebSocket(wsUrl);
-      asrWsRef.current = asrWs;
-
-      asrWs.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "partial") {
-          setLivePartial(data.text);
-        } else if (data.type === "final") {
-          setLiveSegments((prev) => [...prev, {
-            text: data.text,
-            speaker: data.speaker,
-            is_final: true,
-          }]);
-          setLiveTranscript((prev) => prev + data.text + " ");
-          setLivePartial("");
-          // Auto-scroll
-          if (liveTranscriptRef.current) {
-            liveTranscriptRef.current.scrollTop = liveTranscriptRef.current.scrollHeight;
-          }
-        } else if (data.type === "complete") {
-          setLivePartial("");
-        }
-      };
-
-      await new Promise<void>((resolve, reject) => {
-        asrWs.onopen = () => resolve();
-        asrWs.onerror = () => reject(new Error("ASR WebSocket connection failed"));
-        setTimeout(() => reject(new Error("ASR WebSocket timeout")), 5000);
-      });
-
-      // Start recording and stream chunks
+      // Start recording first (get mic permission before WebSocket)
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
+      // Connect ASR streaming WebSocket (non-blocking — don't fail if it takes time)
+      const wsUrl = `${WS_BASE}/ws/asr/${enc.encounter_id}?mode=${mode}&format=webm`;
+      const asrWs = new WebSocket(wsUrl);
+      asrWsRef.current = asrWs;
+
+      asrWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "partial") {
+            setLivePartial(data.text);
+          } else if (data.type === "final") {
+            setLiveSegments((prev) => [...prev, {
+              text: data.text,
+              speaker: data.speaker,
+              is_final: true,
+            }]);
+            setLiveTranscript((prev) => prev + data.text + " ");
+            setLivePartial("");
+            if (liveTranscriptRef.current) {
+              liveTranscriptRef.current.scrollTop = liveTranscriptRef.current.scrollHeight;
+            }
+          } else if (data.type === "complete") {
+            setLivePartial("");
+          } else if (data.type === "error") {
+            setLiveError(data.message ?? "ASR error");
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      asrWs.onerror = () => {
+        setLiveError("ASR connection failed — transcript will be generated after recording");
+      };
+
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
-          // Send chunk to ASR WebSocket
+          // Send chunk to ASR WebSocket if connected
           if (asrWsRef.current?.readyState === WebSocket.OPEN) {
             e.data.arrayBuffer().then((buf) => {
               asrWsRef.current?.send(buf);
@@ -287,7 +291,7 @@ export default function CapturePage() {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setRecordedBlob(blob);
         stream.getTracks().forEach((t) => t.stop());
-        // Close ASR WebSocket — triggers final transcript
+        // Close ASR WebSocket
         if (asrWsRef.current?.readyState === WebSocket.OPEN) {
           asrWsRef.current.close();
         }
@@ -300,15 +304,12 @@ export default function CapturePage() {
       setLiveTranscript("");
       setLivePartial("");
       setLiveSegments([]);
-      setStatus("processing");
-      setStatusMessage("Live transcription active...");
 
       timerRef.current = setInterval(() => {
         setRecordingTime((t) => t + 1);
       }, 1000);
     } catch (err) {
-      setStatusMessage(err instanceof Error ? err.message : "Failed to start live recording");
-      setStatus("error");
+      setLiveError(err instanceof Error ? err.message : "Failed to start recording");
     }
   };
 
@@ -709,6 +710,13 @@ export default function CapturePage() {
                     Live Transcript ({liveSegments.length} segments)
                   </div>
                   <p className="text-sm text-gray-800 whitespace-pre-wrap">{liveTranscript.trim()}</p>
+                </div>
+              )}
+
+              {/* Live error (non-fatal — recording continues, offline pipeline will handle it) */}
+              {liveError && (
+                <div className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                  {liveError}
                 </div>
               )}
             </div>
